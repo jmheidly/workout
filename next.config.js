@@ -5,11 +5,15 @@ const withPWA = require('next-pwa')({
 })
 
 const nextConfig = withPWA({
-  webpack(config) {
+  webpack(config, { isServer }) {
     config.module.rules.push({
       test: /\.svg$/,
       use: ['@svgr/webpack'],
     })
+
+    if (isServer) {
+      config.externals.push('better-sqlite3')
+    }
 
     return config
   },

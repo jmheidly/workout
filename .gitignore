@@ -45,6 +45,11 @@ android/
 
 docker/mongo-data
 
+# SQLite database files
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 # pwa generated files
 public/sw.js
 public/workbox-*.js

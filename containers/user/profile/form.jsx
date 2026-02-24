@@ -23,8 +23,8 @@ const Form = ({ user }) => {
   const slugified = slugify(slug, slugifyOptions)
 
   useEffect(() => {
-    setOriginalSlug(user.slug)
-    setSlug(user.slug)
+    setOriginalSlug(user.slug || '')
+    setSlug(user.slug || '')
   }, [user.slug])
 
   const submitForm = (e) => {
