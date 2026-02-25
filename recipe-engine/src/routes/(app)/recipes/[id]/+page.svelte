@@ -5,7 +5,7 @@
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
   import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
   import { MIX_TYPE_NAMES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
-  import { useSortable, reorder } from '$lib/use-sortable.js'
+  import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
