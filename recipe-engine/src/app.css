@@ -21,6 +21,15 @@
   --color-input: #e5e5e5;
   --color-ring: #0a0a0a;
   --radius: 0.5rem;
+
+  --color-sidebar: var(--color-secondary);
+  --color-sidebar-foreground: var(--color-secondary-foreground);
+  --color-sidebar-accent: var(--color-accent);
+  --color-sidebar-accent-foreground: var(--color-accent-foreground);
+  --color-sidebar-border: var(--color-border);
+  --color-sidebar-ring: var(--color-ring);
+  --sidebar-width: 16rem;
+  --sidebar-width-icon: 3rem;
 }
 
 @layer base {

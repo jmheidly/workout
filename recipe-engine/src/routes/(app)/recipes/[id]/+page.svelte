@@ -5,6 +5,7 @@
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
   import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
   import { MIX_TYPE_NAMES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { COMMON_INGREDIENTS } from '$lib/common-ingredients.js'
   import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
@@ -105,6 +106,73 @@
   let mixerProfileId = $state(data.recipe.mixer_profile_id || '')
   let mixType = $state(data.recipe.mix_type || 'Improved Mix')
 
+  // Ingredient Library (autocomplete)
+  let ingredientLibrary = $state(data.ingredientLibrary || [])
+  let acActiveIdx = $state(-1)
+  let acOpenFor = $state(null)
+  let acQuery = $state('')
+
+  let acSuggestions = $derived.by(() => {
+    if (!acOpenFor) return []
+    const q = (acQuery || '').toLowerCase()
+    const usedNames = new Set(ingredients.map((i) => i.name.toLowerCase()))
+    // Merge user library (priority) with built-in common ingredients
+    const seen = new Set()
+    const merged = []
+    for (const entry of ingredientLibrary) {
+      const key = entry.name.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        merged.push(entry)
+      }
+    }
+    for (const entry of COMMON_INGREDIENTS) {
+      const key = entry.name.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        merged.push(entry)
+      }
+    }
+    return merged
+      .filter((entry) => (!q || entry.name.toLowerCase().includes(q)) && !usedNames.has(entry.name.toLowerCase()))
+      .slice(0, 10)
+  })
+
+  function acOpen(ingId, name) {
+    acOpenFor = ingId
+    acQuery = name || ''
+    acActiveIdx = -1
+  }
+
+  function acClose() {
+    acOpenFor = null
+    acQuery = ''
+    acActiveIdx = -1
+  }
+
+  function acSelect(ing, entry) {
+    ing.name = entry.name
+    ing.category = entry.category
+    acClose()
+    onFieldChange()
+  }
+
+  function acKeydown(evt, ing) {
+    if (!acSuggestions.length) return
+    if (evt.key === 'ArrowDown') {
+      evt.preventDefault()
+      acActiveIdx = (acActiveIdx + 1) % acSuggestions.length
+    } else if (evt.key === 'ArrowUp') {
+      evt.preventDefault()
+      acActiveIdx = acActiveIdx <= 0 ? acSuggestions.length - 1 : acActiveIdx - 1
+    } else if (evt.key === 'Enter' && acActiveIdx >= 0) {
+      evt.preventDefault()
+      acSelect(ing, acSuggestions[acActiveIdx])
+    } else if (evt.key === 'Escape') {
+      acClose()
+    }
+  }
+
   // Process Steps (§10)
   let processSteps = $state(
     (data.recipe.process_steps || []).map((s) => ({ ...s }))
@@ -139,6 +207,12 @@
   })
 
   let pfIngredients = $derived(ingredients.filter((i) => i.category === 'PREFERMENT'))
+
+  let recipeReady = $derived(
+    calculated &&
+    ingredients.some((i) => i.category === 'FLOUR' && i.base_qty > 0) &&
+    ingredients.some((i) => i.category === 'LIQUID' && i.base_qty > 0)
+  )
 
   let ingTotal = $derived(ingredients.reduce((s, i) => s + (i.base_qty || 0), 0))
 
@@ -233,6 +307,11 @@
       })),
     }
   }
+
+  // ── Dirty tracking ───────────────────────────────────────────
+
+  let savedSnapshot = $state(JSON.stringify(buildRecipeData()))
+  let hasChanges = $derived(JSON.stringify(buildRecipeData()) !== savedSnapshot)
 
   // ── Ingredient CRUD ────────────────────────────────────────
 
@@ -678,13 +757,8 @@
 
 <!-- ── Sticky Action Bar ────────────────────────────────── -->
 
-<div class="sticky top-14 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm">
+<div class="sticky top-0 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm">
   <div class="flex items-center gap-3">
-    <Button variant="ghost" size="sm" href="/recipes" class="gap-1.5 text-muted-foreground">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
-      Recipes
-    </Button>
-
     <div class="flex-1"></div>
 
     {#if isDraft}
@@ -704,7 +778,7 @@
       CSV
     </Button>
 
-    <Button variant="outline" size="sm" href="/recipes/{data.recipe.id}/production" disabled={!calculated}>
+    <Button variant="outline" size="sm" href="/recipes/{data.recipe.id}/production" disabled={!recipeReady}>
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Production
     </Button>
@@ -719,6 +793,8 @@
           if (result.type === 'success') {
             toast.success('Recipe saved')
             if (result.data?.calculated) calculated = result.data.calculated
+            if (result.data?.ingredientLibrary) ingredientLibrary = result.data.ingredientLibrary
+            savedSnapshot = JSON.stringify(buildRecipeData())
           } else {
             toast.error('Failed to save recipe')
           }
@@ -730,7 +806,7 @@
       <Button
         type="submit"
         size="sm"
-        disabled={saving || isDraft}
+        disabled={saving || isDraft || !hasChanges}
         class="min-w-20"
       >
         {#if saving}
@@ -981,13 +1057,33 @@
               {@const calc = getCalc(ing.id)}
               <tr class="group border-b border-border transition-colors hover:bg-muted/30">
                 <td class="px-4 py-2">
-                  <input
-                    type="text"
-                    bind:value={ing.name}
-                    oninput={onFieldChange}
-                    placeholder="Ingredient name"
-                    class="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-sm outline-none transition-colors focus:border-input focus:bg-background focus:ring-1 focus:ring-ring"
-                  />
+                  <div class="relative">
+                    <input
+                      type="text"
+                      bind:value={ing.name}
+                      oninput={(e) => { acOpen(ing.id, e.target.value); onFieldChange() }}
+                      onfocus={(e) => { acOpen(ing.id, e.target.value || '') }}
+                      onblur={() => { setTimeout(acClose, 150) }}
+                      onkeydown={(e) => acKeydown(e, ing)}
+                      placeholder="Ingredient name"
+                      autocomplete="off"
+                      class="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-sm outline-none transition-colors focus:border-input focus:bg-background focus:ring-1 focus:ring-ring"
+                    />
+                    {#if acOpenFor === ing.id && acSuggestions.length > 0}
+                      <div class="absolute left-0 top-full z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                        {#each acSuggestions as entry, i}
+                          <button
+                            type="button"
+                            class="flex w-full items-center justify-between px-2 py-1.5 text-sm hover:bg-accent {i === acActiveIdx ? 'bg-accent' : ''}"
+                            onmousedown={() => acSelect(ing, entry)}
+                          >
+                            <span>{entry.name}</span>
+                            <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {CATEGORY_COLORS[entry.category] || ''}">{entry.category}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
                 </td>
                 <td class="px-4 py-2">
                   <input
