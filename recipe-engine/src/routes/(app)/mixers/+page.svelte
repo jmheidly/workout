@@ -17,6 +17,12 @@
     CardContent,
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
+  import {
+    SelectRoot,
+    SelectTrigger,
+    SelectContent,
+    SelectItem,
+  } from '$lib/components/ui/select/index.js'
 
   // Calibration mix types (Short Mix uses Improved's calibration, not its own)
   const CAL_MIX_TYPES = ['Improved Mix', 'Intensive Mix', 'Short Improved']
@@ -144,17 +150,22 @@
                 />
               </div>
               <div class="w-40">
-                <label for="mixer-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">Type</label>
-                <select
-                  id="mixer-type"
+                <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Type</span>
+                <SelectRoot
+                  type="single"
                   value={formData.type}
-                  onchange={(e) => onTypeChange(e.target.value)}
-                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  onValueChange={(v) => onTypeChange(v)}
+                  items={MIXER_TYPES.map((t) => ({ value: t, label: t }))}
                 >
-                  {#each MIXER_TYPES as t}
-                    <option value={t}>{t}</option>
-                  {/each}
-                </select>
+                  <SelectTrigger>
+                    <span>{formData.type}</span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each MIXER_TYPES as t}
+                      <SelectItem value={t} label={t} />
+                    {/each}
+                  </SelectContent>
+                </SelectRoot>
               </div>
             </div>
 

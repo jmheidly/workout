@@ -5,6 +5,7 @@
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
   import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
   import { MIX_TYPE_NAMES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { useSortable, reorder } from '$lib/use-sortable.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -15,6 +16,12 @@
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
   import { Separator } from '$lib/components/ui/separator/index.js'
+  import {
+    SelectRoot,
+    SelectTrigger,
+    SelectContent,
+    SelectItem,
+  } from '$lib/components/ui/select/index.js'
 
   // ── Constants ──────────────────────────────────────────────
 
@@ -102,6 +109,16 @@
   let processSteps = $state(
     (data.recipe.process_steps || []).map((s) => ({ ...s }))
   )
+  let stepsContainer = $state(null)
+
+  useSortable(() => stepsContainer, {
+    animation: 200,
+    handle: '.step-drag-handle',
+    ghostClass: 'opacity-30',
+    onEnd(evt) {
+      processSteps = reorder(processSteps, evt)
+    },
+  })
 
   // Plain variable — not reactive UI state, just a timer reference
   let calcTimeout
@@ -846,33 +863,44 @@
       <!-- Mixer & Mix Type (§7) -->
       <div class="flex flex-wrap items-end gap-4">
         <div class="w-48">
-          <label for="mixer-profile" class="mb-1.5 block text-xs font-medium text-muted-foreground">
-            Mixer
-          </label>
-          <select
-            id="mixer-profile"
-            bind:value={mixerProfileId}
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+          <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mixer</span>
+          <SelectRoot
+            type="single"
+            value={mixerProfileId}
+            onValueChange={(v) => { mixerProfileId = v }}
+            items={[
+              { value: '', label: 'None' },
+              ...(data.mixerProfiles || []).map((mp) => ({ value: mp.id, label: `${mp.name} (${mp.type})` })),
+            ]}
           >
-            <option value="">None</option>
-            {#each data.mixerProfiles || [] as mp}
-              <option value={mp.id}>{mp.name} ({mp.type})</option>
-            {/each}
-          </select>
+            <SelectTrigger>
+              <span>{mixerProfileId ? (data.mixerProfiles || []).find((m) => m.id === mixerProfileId)?.name || 'Unknown' : 'None'}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="" label="None" />
+              {#each data.mixerProfiles || [] as mp}
+                <SelectItem value={mp.id} label="{mp.name} ({mp.type})" />
+              {/each}
+            </SelectContent>
+          </SelectRoot>
         </div>
         <div class="w-40">
-          <label for="mix-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">
-            Mix Type
-          </label>
-          <select
-            id="mix-type"
-            bind:value={mixType}
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+          <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mix Type</span>
+          <SelectRoot
+            type="single"
+            value={mixType}
+            onValueChange={(v) => { mixType = v }}
+            items={MIX_TYPE_NAMES.map((mt) => ({ value: mt, label: mt }))}
           >
-            {#each MIX_TYPE_NAMES as mt}
-              <option value={mt}>{mt}</option>
-            {/each}
-          </select>
+            <SelectTrigger>
+              <span>{mixType}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {#each MIX_TYPE_NAMES as mt}
+                <SelectItem value={mt} label={mt} />
+              {/each}
+            </SelectContent>
+          </SelectRoot>
         </div>
         {#if mixingInfo}
           <div class="flex items-center gap-3 pb-2 text-sm">
@@ -973,15 +1001,21 @@
                   />
                 </td>
                 <td class="px-4 py-2">
-                  <select
+                  <SelectRoot
+                    type="single"
                     value={ing.category}
-                    onchange={(e) => onCategoryChange(idx, e.target.value)}
-                    class="rounded-md border border-transparent bg-transparent px-2 py-1 text-xs outline-none transition-colors focus:border-input focus:bg-background focus:ring-1 focus:ring-ring"
+                    onValueChange={(v) => onCategoryChange(idx, v)}
+                    items={CATEGORIES.map((c) => ({ value: c, label: c }))}
                   >
-                    {#each CATEGORIES as cat}
-                      <option value={cat}>{cat}</option>
-                    {/each}
-                  </select>
+                    <SelectTrigger class="h-7 border-transparent bg-transparent px-2 text-xs hover:border-input">
+                      <span>{ing.category}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {#each CATEGORIES as cat}
+                        <SelectItem value={cat} label={cat} />
+                      {/each}
+                    </SelectContent>
+                  </SelectRoot>
                 </td>
                 <td class="px-4 py-2 text-right tabular-nums text-muted-foreground">
                   {calc ? formatPct(calc.overall_bakers_pct) : '-'}
@@ -1000,15 +1034,21 @@
                     <div class="flex flex-wrap items-center gap-4 text-sm">
                       <div class="flex items-center gap-1.5">
                         <span class="text-xs font-medium text-muted-foreground">Type</span>
-                        <select
+                        <SelectRoot
+                          type="single"
                           value={ing.preferment_settings.type}
-                          onchange={(e) => onPfTypeChange(ing.id, e.target.value)}
-                          class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+                          onValueChange={(v) => onPfTypeChange(ing.id, v)}
+                          items={PF_TYPES.map((t) => ({ value: t, label: t }))}
                         >
-                          {#each PF_TYPES as t}
-                            <option value={t}>{t}</option>
-                          {/each}
-                        </select>
+                          <SelectTrigger class="h-7 w-auto min-w-28 px-2 text-xs">
+                            <span>{ing.preferment_settings.type}</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {#each PF_TYPES as t}
+                              <SelectItem value={t} label={t} />
+                            {/each}
+                          </SelectContent>
+                        </SelectRoot>
                       </div>
 
                       <div class="flex items-center gap-1.5">
@@ -1245,24 +1285,27 @@
         {#if availableIngs.length > 0}
           <CardFooter class="border-t border-border pt-3">
             <div class="flex items-center gap-2">
-              <select
-                bind:value={pfAddSelect[pfIng.id]}
-                class="rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none ring-ring transition-shadow focus:ring-1"
-              >
-                <option value="">Add ingredient...</option>
-                {#each availableIngs as avail (avail.id)}
-                  <option value={avail.id}>{avail.name} ({avail.category})</option>
-                {/each}
-              </select>
-              <Button
-                variant="secondary"
-                size="sm"
-                onclick={() => {
-                  if (pfAddSelect[pfIng.id]) addIngredientToPf(pfIng.id, pfAddSelect[pfIng.id])
+              <SelectRoot
+                type="single"
+                value={pfAddSelect[pfIng.id] || ''}
+                onValueChange={(v) => {
+                  pfAddSelect[pfIng.id] = v
+                  if (v) addIngredientToPf(pfIng.id, v)
                 }}
+                items={[
+                  { value: '', label: 'Add ingredient...' },
+                  ...availableIngs.map((a) => ({ value: a.id, label: `${a.name} (${a.category})` })),
+                ]}
               >
-                Add
-              </Button>
+                <SelectTrigger class="w-auto min-w-48">
+                  <span class="text-muted-foreground">Add ingredient...</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {#each availableIngs as avail (avail.id)}
+                    <SelectItem value={avail.id} label="{avail.name} ({avail.category})" />
+                  {/each}
+                </SelectContent>
+              </SelectRoot>
             </div>
           </CardFooter>
         {/if}
@@ -1350,30 +1393,13 @@
       </CardContent>
     {:else}
       <CardContent class="p-0">
-        <div class="divide-y divide-border">
+        <div class="divide-y divide-border" bind:this={stepsContainer}>
           {#each processSteps as step, idx (step.id)}
             <div class="group px-6 py-4 transition-colors hover:bg-muted/20">
               <div class="flex items-start gap-3">
-                <!-- Reorder buttons -->
-                <div class="flex flex-col gap-0.5 pt-1">
-                  <button
-                    type="button"
-                    onclick={() => moveProcessStep(idx, -1)}
-                    disabled={idx === 0}
-                    class="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-20"
-                    aria-label="Move up"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => moveProcessStep(idx, 1)}
-                    disabled={idx === processSteps.length - 1}
-                    class="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-20"
-                    aria-label="Move down"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                  </button>
+                <!-- Drag handle -->
+                <div class="step-drag-handle flex cursor-grab items-center pt-2 text-muted-foreground/40 transition-colors hover:text-muted-foreground active:cursor-grabbing">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
                 </div>
 
                 <!-- Step number -->
@@ -1384,14 +1410,21 @@
                 <!-- Step content -->
                 <div class="flex-1 space-y-2.5">
                   <div class="flex flex-wrap items-center gap-2">
-                    <select
-                      bind:value={step.stage}
-                      class="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium outline-none ring-ring transition-shadow focus:ring-1"
+                    <SelectRoot
+                      type="single"
+                      value={step.stage}
+                      onValueChange={(v) => { step.stage = v }}
+                      items={PROCESS_STAGES.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
                     >
-                      {#each PROCESS_STAGES as stage}
-                        <option value={stage}>{stage.replace(/_/g, ' ')}</option>
-                      {/each}
-                    </select>
+                      <SelectTrigger class="h-7 w-auto min-w-28 px-2.5 text-xs font-medium">
+                        <span>{step.stage.replace(/_/g, ' ')}</span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {#each PROCESS_STAGES as stage}
+                          <SelectItem value={stage} label={stage.replace(/_/g, ' ')} />
+                        {/each}
+                      </SelectContent>
+                    </SelectRoot>
                     <input
                       type="text"
                       bind:value={step.title}
