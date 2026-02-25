@@ -98,6 +98,14 @@ function initSchema(db) {
       first_speed_rounds REAL NOT NULL,
       UNIQUE(mixer_id, mix_type)
     );
+
+    CREATE TABLE IF NOT EXISTS ingredient_library (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      UNIQUE(user_id, name COLLATE NOCASE)
+    );
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -110,6 +118,8 @@ function initSchema(db) {
     'ALTER TABLE preferment_settings ADD COLUMN fermentation_duration_min INTEGER',
     'ALTER TABLE recipes ADD COLUMN mixer_profile_id TEXT',
     "ALTER TABLE recipes ADD COLUMN mix_type TEXT NOT NULL DEFAULT 'Improved Mix'",
+    'ALTER TABLE users ADD COLUMN name TEXT',
+    'ALTER TABLE users ADD COLUMN google_id TEXT',
   ]
   for (const sql of migrations) {
     try {
@@ -118,6 +128,9 @@ function initSchema(db) {
       // Column already exists — safe to ignore
     }
   }
+
+  // Unique indexes
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL')
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -125,35 +138,91 @@ function initSchema(db) {
 /**
  * @param {string} email
  * @param {string} passwordHash
- * @returns {{ id: string, email: string }}
+ * @param {string} [name]
+ * @returns {{ id: string, email: string, name: string | null }}
  */
-export function createUser(email, passwordHash) {
+export function createUser(email, passwordHash, name) {
   const db = getDb()
   const id = generateId()
-  db.prepare('INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)').run(
+  db.prepare('INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)').run(
     id,
     email,
-    passwordHash
+    passwordHash,
+    name || null
   )
-  return { id, email }
+  return { id, email, name: name || null }
 }
 
 /**
  * @param {string} email
- * @returns {{ id: string, email: string, password_hash: string } | undefined}
+ * @returns {{ id: string, email: string, name: string | null, password_hash: string, google_id: string | null } | undefined}
  */
 export function getUserByEmail(email) {
   const db = getDb()
-  return db.prepare('SELECT id, email, password_hash FROM users WHERE email = ?').get(email)
+  return db
+    .prepare('SELECT id, email, name, password_hash, google_id FROM users WHERE email = ?')
+    .get(email)
 }
 
 /**
  * @param {string} id
- * @returns {{ id: string, email: string } | undefined}
+ * @returns {{ id: string, email: string, name: string | null } | undefined}
  */
 export function getUserById(id) {
   const db = getDb()
-  return db.prepare('SELECT id, email FROM users WHERE id = ?').get(id)
+  return db.prepare('SELECT id, email, name FROM users WHERE id = ?').get(id)
+}
+
+/**
+ * @param {string} googleId
+ * @returns {{ id: string, email: string, name: string | null, google_id: string } | undefined}
+ */
+export function getUserByGoogleId(googleId) {
+  const db = getDb()
+  return db
+    .prepare('SELECT id, email, name, google_id FROM users WHERE google_id = ?')
+    .get(googleId)
+}
+
+/**
+ * @param {string} email
+ * @param {string} name
+ * @param {string} googleId
+ * @returns {{ id: string, email: string, name: string }}
+ */
+export function createGoogleUser(email, name, googleId) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare('INSERT INTO users (id, email, name, google_id) VALUES (?, ?, ?, ?)').run(
+    id,
+    email,
+    name,
+    googleId
+  )
+  return { id, email, name }
+}
+
+/**
+ * @param {string} id
+ * @param {object} fields
+ * @param {string} [fields.name]
+ * @param {string} [fields.google_id]
+ */
+export function updateUser(id, fields) {
+  const db = getDb()
+  const sets = []
+  const values = []
+  if (fields.name !== undefined) {
+    sets.push('name = ?')
+    values.push(fields.name)
+  }
+  if (fields.google_id !== undefined) {
+    sets.push('google_id = ?')
+    values.push(fields.google_id)
+  }
+  if (sets.length === 0) return
+  values.push(id)
+  db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...values)
 }
 
 /**
@@ -649,4 +718,79 @@ export function updateMixerProfile(id, data) {
 export function deleteMixerProfile(id) {
   const db = getDb()
   db.prepare('DELETE FROM mixer_profiles WHERE id = ?').run(id)
+}
+
+// ─── Ingredient Library ──────────────────────────────────────────────────────
+
+/**
+ * @param {string} userId
+ * @returns {Array<{id: string, name: string, category: string}>}
+ */
+export function getIngredientLibrary(userId) {
+  const db = getDb()
+  return db
+    .prepare('SELECT id, name, category FROM ingredient_library WHERE user_id = ? ORDER BY name')
+    .all(userId)
+}
+
+/**
+ * @param {string} userId
+ * @param {string} name
+ * @param {string} category
+ * @returns {{id: string, name: string, category: string}}
+ */
+export function createIngredientLibraryEntry(userId, name, category) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare(
+    'INSERT INTO ingredient_library (id, user_id, name, category) VALUES (?, ?, ?, ?)'
+  ).run(id, userId, name, category)
+  return { id, name, category }
+}
+
+/**
+ * @param {string} id
+ * @param {string} name
+ * @param {string} category
+ */
+export function updateIngredientLibraryEntry(id, name, category) {
+  const db = getDb()
+  db.prepare('UPDATE ingredient_library SET name = ?, category = ? WHERE id = ?').run(
+    name,
+    category,
+    id
+  )
+}
+
+/**
+ * @param {string} id
+ */
+export function deleteIngredientLibraryEntry(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM ingredient_library WHERE id = ?').run(id)
+}
+
+/**
+ * Sync ingredients into the user's library on recipe save.
+ * Inserts new entries and updates category if it changed.
+ * Skips PREFERMENT ingredients and empty names.
+ * @param {string} userId
+ * @param {Array<{name: string, category: string}>} ingredients
+ */
+export function syncIngredientLibrary(userId, ingredients) {
+  const db = getDb()
+  const upsert = db.prepare(`
+    INSERT INTO ingredient_library (id, user_id, name, category)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, name COLLATE NOCASE) DO UPDATE SET category = excluded.category
+  `)
+
+  const txn = db.transaction(() => {
+    for (const ing of ingredients) {
+      if (!ing.name || !ing.name.trim() || ing.category === 'PREFERMENT') continue
+      upsert.run(generateId(), userId, ing.name.trim(), ing.category)
+    }
+  })
+
+  txn()
 }

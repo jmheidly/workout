@@ -17,12 +17,13 @@ export function load({ locals }) {
 export const actions = {
   default: async ({ request, cookies }) => {
     const form = await request.formData()
+    const name = form.get('name')?.toString()?.trim()
     const email = form.get('email')?.toString()?.trim()?.toLowerCase()
     const password = form.get('password')?.toString()
     const confirmPassword = form.get('confirmPassword')?.toString()
 
-    if (!email || !password || !confirmPassword) {
-      return fail(400, { error: 'All fields are required', email })
+    if (!name || !email || !password || !confirmPassword) {
+      return fail(400, { error: 'All fields are required', email, name })
     }
 
     if (password.length < 6) {
@@ -39,7 +40,7 @@ export const actions = {
     }
 
     const hash = hashPassword(password)
-    const user = createUser(email, hash)
+    const user = createUser(email, hash, name)
 
     const { token, expiresAt } = createSession(user.id)
     setSessionCookie(cookies, token, expiresAt)

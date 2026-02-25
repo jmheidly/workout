@@ -22,6 +22,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT,
+    name TEXT,
+    google_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -106,8 +108,8 @@ let demoUser = db
 if (!demoUser) {
   const userId = randomUUID()
   db.prepare(
-    'INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)'
-  ).run(userId, DEMO_EMAIL, passwordHash)
+    'INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)'
+  ).run(userId, DEMO_EMAIL, passwordHash, 'Demo Baker')
   demoUser = { id: userId }
   console.log(`Created demo user: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`)
 } else {

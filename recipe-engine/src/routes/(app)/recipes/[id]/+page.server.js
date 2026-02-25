@@ -1,5 +1,5 @@
 import { error, fail } from '@sveltejs/kit'
-import { getRecipe, updateRecipe, getMixerProfiles } from '$lib/server/db.js'
+import { getRecipe, updateRecipe, getMixerProfiles, getIngredientLibrary, syncIngredientLibrary } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
@@ -22,8 +22,9 @@ export function load({ params, locals }) {
   }
 
   const mixerProfiles = getMixerProfiles(locals.user.id)
+  const ingredientLibrary = getIngredientLibrary(locals.user.id)
 
-  return { recipe, calculated, mixerProfiles }
+  return { recipe, calculated, mixerProfiles, ingredientLibrary }
 }
 
 /** @type {import('./$types').Actions} */
@@ -47,6 +48,7 @@ export const actions = {
     }
 
     updateRecipe(params.id, data)
+    syncIngredientLibrary(locals.user.id, data.ingredients || [])
 
     // Return updated recipe + calculation
     const recipe = getRecipe(params.id)
@@ -57,6 +59,8 @@ export const actions = {
       // ignore
     }
 
-    return { success: true, recipe, calculated }
+    const ingredientLibrary = getIngredientLibrary(locals.user.id)
+
+    return { success: true, recipe, calculated, ingredientLibrary }
   }
 }

@@ -32,7 +32,7 @@
   }
 </script>
 
-{#if href}
+{#if href && !disabled}
   <a
     {href}
     class={cn(baseClasses, variantClasses[variant], sizeClasses[size], className)}
@@ -40,6 +40,15 @@
   >
     {@render children()}
   </a>
+{:else if href && disabled}
+  <span
+    class={cn(baseClasses, variantClasses[variant], sizeClasses[size], 'pointer-events-none opacity-50', className)}
+    aria-disabled="true"
+    role="link"
+    {...restProps}
+  >
+    {@render children()}
+  </span>
 {:else}
   <button
     {type}
