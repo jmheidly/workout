@@ -1,5 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit'
-import { createRecipe } from '$lib/server/db.js'
+import { createRecipe, getMixerProfiles } from '$lib/server/db.js'
+
+/** @type {import('./$types').PageServerLoad} */
+export function load({ locals }) {
+  return { mixerProfiles: getMixerProfiles(locals.user.id) }
+}
 
 /** @type {import('./$types').Actions} */
 export const actions = {
@@ -16,9 +21,9 @@ export const actions = {
     const id = createRecipe(locals.user.id, {
       name,
       yield_per_piece: yieldPerPiece,
-      ddt
+      ddt,
     })
 
     redirect(302, `/recipes/${id}`)
-  }
+  },
 }

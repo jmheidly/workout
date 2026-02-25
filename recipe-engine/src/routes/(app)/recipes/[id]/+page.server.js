@@ -1,5 +1,5 @@
 import { error, fail } from '@sveltejs/kit'
-import { getRecipe, updateRecipe } from '$lib/server/db.js'
+import { getRecipe, updateRecipe, getMixerProfiles } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
@@ -21,7 +21,9 @@ export function load({ params, locals }) {
     // return recipe without calculations if engine fails
   }
 
-  return { recipe, calculated }
+  const mixerProfiles = getMixerProfiles(locals.user.id)
+
+  return { recipe, calculated, mixerProfiles }
 }
 
 /** @type {import('./$types').Actions} */

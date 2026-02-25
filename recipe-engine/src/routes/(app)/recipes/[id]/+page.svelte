@@ -3,6 +3,8 @@
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
+  import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
+  import { MIX_TYPE_NAMES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -33,7 +35,20 @@
     PREFERMENT: 'bg-indigo-100 text-indigo-800'
   }
 
-  const PF_TYPES = ['POOLISH', 'BIGA', 'LEVAIN', 'PATE_FERMENTEE', 'SPONGE', 'FIRST_FEED', 'CUSTOM']
+  const PF_TYPES = ['POOLISH', 'BIGA', 'LEVAIN', 'PATE_FERMENTEE', 'SPONGE', 'CUSTOM']
+
+  // PF types that require a self-reference (old starter / old dough)
+  const SELF_REF_PF_TYPES = new Set(['LEVAIN', 'PATE_FERMENTEE'])
+
+  // Required ingredient categories per PF type (auto-seeded, non-removable)
+  const PF_REQUIRED_CATEGORIES = {
+    POOLISH: ['LEAVENING'],
+    BIGA: ['LEAVENING'],
+    LEVAIN: [],
+    PATE_FERMENTEE: [],
+    SPONGE: ['LEAVENING'],
+    CUSTOM: [],
+  }
 
   // ── Helpers ────────────────────────────────────────────────
 
@@ -48,7 +63,6 @@
     if (n.includes('levain') || n.includes('sourdough')) return 'LEVAIN'
     if (n.includes('pate') || n.includes('old dough')) return 'PATE_FERMENTEE'
     if (n.includes('sponge')) return 'SPONGE'
-    if (n.includes('feed') || n.includes('starter')) return 'FIRST_FEED'
     return 'CUSTOM'
   }
 
@@ -80,6 +94,10 @@
   let autolyse = $state(!!data.recipe.autolyse)
   let autolyseDurationMin = $state(data.recipe.autolyse_duration_min || 20)
 
+  // Mixer & Mix Type (§7)
+  let mixerProfileId = $state(data.recipe.mixer_profile_id || '')
+  let mixType = $state(data.recipe.mix_type || 'Improved Mix')
+
   // Process Steps (§10)
   let processSteps = $state(
     (data.recipe.process_steps || []).map((s) => ({ ...s }))
@@ -89,6 +107,19 @@
   let calcTimeout
 
   // ── Derived ────────────────────────────────────────────────
+
+  let selectedMixer = $derived(
+    mixerProfileId
+      ? (data.mixerProfiles || []).find((m) => m.id === mixerProfileId) || null
+      : null
+  )
+
+  let mixingInfo = $derived.by(() => {
+    if (!selectedMixer) return null
+    const ef = effectiveFriction(selectedMixer.friction_factor, mixType)
+    const dur = calcMixDurations(selectedMixer, mixType)
+    return { effectiveFriction: ef, ...dur }
+  })
 
   let pfIngredients = $derived(ingredients.filter((i) => i.category === 'PREFERMENT'))
 
@@ -104,7 +135,6 @@
     return {
       overall_bp: ings.reduce((s, i) => s + (i.overall_bakers_pct || 0), 0),
       total_formula: ings.reduce((s, i) => s + (i.total_formula_qty || 0), 0),
-      pct_total_flour: ings.reduce((s, i) => s + (i.pct_of_total_flour || 0), 0),
       final_dough_bp: ings.reduce((s, i) => s + (i.final_dough_bakers_pct || 0), 0),
       final_dough: ings.reduce((s, i) => s + (i.final_dough_qty || 0), 0),
       per_item: ings.reduce((s, i) => s + (i.per_item_weight || 0), 0),
@@ -162,6 +192,8 @@
       bake_loss_pct: bakeLossPct,
       autolyse: autolyse ? 1 : 0,
       autolyse_duration_min: autolyseDurationMin,
+      mixer_profile_id: mixerProfileId || null,
+      mix_type: mixType,
       ingredients: ingredients.map((ing, idx) => ({
         id: ing.id,
         name: ing.name,
@@ -218,13 +250,16 @@
     ing.category = newCategory
 
     if (newCategory === 'PREFERMENT' && oldCategory !== 'PREFERMENT') {
+      const pfType = guessPfType(ing.name)
       ing.preferment_settings = {
         ingredient_id: ing.id,
         enabled: 1,
-        type: guessPfType(ing.name),
-        base_source_ingredient_id: null
+        type: pfType,
+        ddt: null,
+        fermentation_duration_min: null
       }
       pfGrams[ing.id] = {}
+      seedPfRequiredIngredients(ing.id, pfType)
     } else if (newCategory !== 'PREFERMENT' && oldCategory === 'PREFERMENT') {
       ing.preferment_settings = null
       delete pfGrams[ing.id]
@@ -233,6 +268,37 @@
       }
     }
     scheduleCalc()
+  }
+
+  /**
+   * Auto-seed required ingredients for a PF type:
+   * - Self-reference for LEVAIN / PATE_FERMENTEE
+   * - First LEAVENING ingredient for POOLISH / BIGA / SPONGE
+   */
+  function seedPfRequiredIngredients(pfId, pfType) {
+    if (!pfGrams[pfId]) pfGrams[pfId] = {}
+    const pfIng = ingredients.find((i) => i.id === pfId)
+
+    // Self-reference (old starter / old dough)
+    if (SELF_REF_PF_TYPES.has(pfType)) {
+      if (pfGrams[pfId][pfId] == null) {
+        pfGrams[pfId][pfId] = 0
+        if (pfIng) pfIng.preferment_bakers_pcts[pfId] = 0.2
+      }
+    }
+
+    // Required categories (e.g. LEAVENING for yeast-based PFs)
+    const requiredCats = PF_REQUIRED_CATEGORIES[pfType] || []
+    for (const cat of requiredCats) {
+      // Find the first recipe ingredient matching this category that isn't already in the PF
+      const match = ingredients.find(
+        (i) => i.category === cat && i.id !== pfId && pfGrams[pfId][i.id] == null
+      )
+      if (match) {
+        pfGrams[pfId][match.id] = 0
+        match.preferment_bakers_pcts[pfId] = 0
+      }
+    }
   }
 
   function onFieldChange() {
@@ -299,7 +365,8 @@
     }, 0)
 
     for (const ing of ingredients) {
-      if (ing.category === 'PREFERMENT') continue
+      // Skip other preferments, but allow the self-reference (ing.id === pfId)
+      if (ing.category === 'PREFERMENT' && ing.id !== pfId) continue
       const g = grams[ing.id]
       if (g != null && g > 0 && flourGrams > 0) {
         ing.preferment_bakers_pcts[pfId] = g / flourGrams
@@ -348,15 +415,37 @@
 
   function onPfTypeChange(ingId, newType) {
     const ing = ingredients.find((i) => i.id === ingId)
-    if (ing?.preferment_settings) ing.preferment_settings.type = newType
-  }
+    if (!ing?.preferment_settings) return
+    const oldType = ing.preferment_settings.type
+    ing.preferment_settings.type = newType
 
-  function onPfSourceChange(ingId, sourceId) {
-    const ing = ingredients.find((i) => i.id === ingId)
-    if (ing?.preferment_settings) {
-      ing.preferment_settings.base_source_ingredient_id = sourceId || null
-      scheduleCalc()
+    // Remove self-reference when switching away from a type that needs it
+    if (!SELF_REF_PF_TYPES.has(newType) && SELF_REF_PF_TYPES.has(oldType)) {
+      if (pfGrams[ingId]) delete pfGrams[ingId][ingId]
+      delete ing.preferment_bakers_pcts[ingId]
+      recalcBpsFromGrams(ingId)
     }
+
+    // Remove old required-category ingredients that the new type doesn't need
+    const oldRequired = PF_REQUIRED_CATEGORIES[oldType] || []
+    const newRequired = PF_REQUIRED_CATEGORIES[newType] || []
+    for (const cat of oldRequired) {
+      if (newRequired.includes(cat)) continue
+      // Find and remove ingredients of this category that were auto-seeded
+      for (const other of ingredients) {
+        if (other.category === cat && other.id !== ingId && pfGrams[ingId]?.[other.id] != null) {
+          // Only remove if grams are still 0 (untouched by the baker)
+          if (pfGrams[ingId][other.id] === 0) {
+            delete pfGrams[ingId][other.id]
+            delete other.preferment_bakers_pcts[ingId]
+          }
+        }
+      }
+    }
+
+    // Seed required ingredients for the new type
+    seedPfRequiredIngredients(ingId, newType)
+    scheduleCalc()
   }
 
   // ── Process Steps ────────────────────────────────────────────
@@ -421,7 +510,7 @@
 
     const header = [
       'Ingredient', 'Category', 'K (g)', 'Overall BP %',
-      'Total Formula (g)', '% Total Flour', 'Final Dough BP %',
+      'Total Formula (g)', 'Final Dough BP %',
       'Final Dough (g)', 'Per Item (g)', 'Batch (g)'
     ]
     for (const pf of pfs) {
@@ -433,7 +522,7 @@
       const row = [
         ing.name || '(unnamed)', ing.category,
         ing.base_qty.toFixed(2), (ing.overall_bakers_pct * 100).toFixed(2),
-        ing.total_formula_qty.toFixed(2), (ing.pct_of_total_flour * 100).toFixed(2),
+        ing.total_formula_qty.toFixed(2),
         (ing.final_dough_bakers_pct * 100).toFixed(2), ing.final_dough_qty.toFixed(2),
         ing.per_item_weight.toFixed(2), ing.batch_qty.toFixed(2)
       ]
@@ -598,6 +687,11 @@
       CSV
     </Button>
 
+    <Button variant="outline" size="sm" href="/recipes/{data.recipe.id}/production" disabled={!calculated}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Production
+    </Button>
+
     <form
       method="POST"
       action="?/save"
@@ -749,6 +843,54 @@
         {/if}
       </div>
 
+      <!-- Mixer & Mix Type (§7) -->
+      <div class="flex flex-wrap items-end gap-4">
+        <div class="w-48">
+          <label for="mixer-profile" class="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Mixer
+          </label>
+          <select
+            id="mixer-profile"
+            bind:value={mixerProfileId}
+            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+          >
+            <option value="">None</option>
+            {#each data.mixerProfiles || [] as mp}
+              <option value={mp.id}>{mp.name} ({mp.type})</option>
+            {/each}
+          </select>
+        </div>
+        <div class="w-40">
+          <label for="mix-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Mix Type
+          </label>
+          <select
+            id="mix-type"
+            bind:value={mixType}
+            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+          >
+            {#each MIX_TYPE_NAMES as mt}
+              <option value={mt}>{mt}</option>
+            {/each}
+          </select>
+        </div>
+        {#if mixingInfo}
+          <div class="flex items-center gap-3 pb-2 text-sm">
+            <Badge variant="secondary" class="bg-emerald-50 text-emerald-700 font-normal tabular-nums">
+              Friction {mixingInfo.effectiveFriction.toFixed(1)}&deg;C
+            </Badge>
+            <Badge variant="secondary" class="font-normal tabular-nums">
+              {#if mixType === 'Short Mix'}
+                1st: {mixingInfo.first_speed_min.toFixed(1)}m
+              {:else}
+                1st: {mixingInfo.first_speed_min.toFixed(1)}m, 2nd: {mixingInfo.second_speed_min.toFixed(1)}m
+              {/if}
+              ({(mixingInfo.first_speed_min + mixingInfo.second_speed_min).toFixed(1)}m total)
+            </Badge>
+          </div>
+        {/if}
+      </div>
+
       <!-- Summary badges -->
       {#if calculated}
         <Separator />
@@ -870,24 +1012,46 @@
                       </div>
 
                       <div class="flex items-center gap-1.5">
-                        <span class="text-xs font-medium text-muted-foreground">Chained from</span>
-                        <select
-                          value={ing.preferment_settings.base_source_ingredient_id || ''}
-                          onchange={(e) => onPfSourceChange(ing.id, e.target.value)}
-                          class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
-                        >
-                          <option value="">None</option>
-                          {#each pfIngredients.filter((p) => p.id !== ing.id) as otherPf (otherPf.id)}
-                            <option value={otherPf.id}>{otherPf.name}</option>
-                          {/each}
-                        </select>
+                        <span class="text-xs font-medium text-muted-foreground">DDT</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={ing.preferment_settings.ddt ?? ''}
+                          oninput={(e) => {
+                            ing.preferment_settings.ddt = e.target.value === '' ? null : parseFloat(e.target.value)
+                            scheduleCalc()
+                          }}
+                          placeholder={ddt}
+                          class="w-16 rounded-md border border-input bg-background px-2 py-1 text-xs tabular-nums outline-none ring-ring transition-shadow focus:ring-1"
+                        />
+                        <span class="text-[10px] text-muted-foreground">&deg;C</span>
+                      </div>
+
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-medium text-muted-foreground">Ferment</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={ing.preferment_settings.fermentation_duration_min ?? ''}
+                          oninput={(e) => {
+                            ing.preferment_settings.fermentation_duration_min = e.target.value === '' ? null : parseInt(e.target.value)
+                            scheduleCalc()
+                          }}
+                          placeholder={FERMENTATION_DEFAULTS[ing.preferment_settings.type] ?? 480}
+                          class="w-16 rounded-md border border-input bg-background px-2 py-1 text-xs tabular-nums outline-none ring-ring transition-shadow focus:ring-1"
+                        />
+                        <span class="text-[10px] text-muted-foreground">
+                          {formatDuration(ing.preferment_settings.fermentation_duration_min ?? FERMENTATION_DEFAULTS[ing.preferment_settings.type] ?? 480)}
+                        </span>
                       </div>
 
                       {#if getCalcPf(ing.id)?.enabled}
                         {@const cpf = getCalcPf(ing.id)}
                         <Separator orientation="vertical" class="!h-4" />
                         <span class="text-xs text-muted-foreground tabular-nums">
-                          Ratio {cpf.ratio.toFixed(3)} &middot; PF Flour {formatPct(cpf.prefermented_flour_pct)}
+                          Ratio {formatPct(cpf.ratio)} &middot; PF Flour {formatPct(cpf.prefermented_flour_pct)}
                         </span>
                       {/if}
                     </div>
@@ -928,7 +1092,6 @@
                 <th class="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Ingredient</th>
                 <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Overall BP</th>
                 <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total Formula</th>
-                <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">% Tot. Flour</th>
                 <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">FD BP</th>
                 <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Final Dough</th>
                 <th class="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Per Item</th>
@@ -944,7 +1107,6 @@
                   </td>
                   <td class="px-4 py-2 text-right tabular-nums">{formatPct(ing.overall_bakers_pct)}</td>
                   <td class="px-4 py-2 text-right tabular-nums">{formatGrams(ing.total_formula_qty)}</td>
-                  <td class="px-4 py-2 text-right tabular-nums">{formatPct(ing.pct_of_total_flour)}</td>
                   <td class="px-4 py-2 text-right tabular-nums">{formatPct(ing.final_dough_bakers_pct)}</td>
                   <td class="px-4 py-2 text-right tabular-nums">{formatGrams(ing.final_dough_qty)}</td>
                   <td class="px-4 py-2 text-right tabular-nums">{formatGrams(ing.per_item_weight)}</td>
@@ -958,7 +1120,6 @@
                   <td class="px-4 py-2.5 font-semibold">Total</td>
                   <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatPct(calcTotals.overall_bp)}</td>
                   <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatGrams(calcTotals.total_formula)}</td>
-                  <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatPct(calcTotals.pct_total_flour)}</td>
                   <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatPct(calcTotals.final_dough_bp)}</td>
                   <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatGrams(calcTotals.final_dough)}</td>
                   <td class="px-4 py-2.5 text-right font-semibold tabular-nums">{formatGrams(calcTotals.per_item)}</td>
@@ -978,11 +1139,12 @@
       {@const gramsForPf = pfGrams[pfIng.id] || {}}
       {@const gramsTotal = Object.values(gramsForPf).reduce((s, v) => s + (v || 0), 0)}
       {@const bpTotal = ingredients.reduce((s, i) => {
-        if (i.category === 'PREFERMENT') return s
+        if (i.category === 'PREFERMENT' && i.id !== pfIng.id) return s
         const bp = i.preferment_bakers_pcts[pfIng.id]
         return s + (bp != null ? bp : 0)
       }, 0)}
-      {@const availableIngs = ingredients.filter((i) => i.category !== 'PREFERMENT' && gramsForPf[i.id] == null && i.name)}
+      {@const availableIngs = ingredients.filter((i) => (i.category !== 'PREFERMENT' || i.id === pfIng.id) && gramsForPf[i.id] == null && i.name)}
+      {@const pfRequiredCats = PF_REQUIRED_CATEGORIES[pfIng.preferment_settings?.type] || []}
 
       <Card class="border-indigo-200">
         <CardHeader class="flex-row items-center justify-between space-y-0 pb-0">
@@ -994,7 +1156,7 @@
           </div>
           {#if calcPf?.enabled}
             <span class="text-xs tabular-nums text-muted-foreground">
-              Ratio {calcPf.ratio.toFixed(3)} &middot; BP {calcPf.total_bakers_pct.toFixed(3)} &middot; PF Flour {formatPct(calcPf.prefermented_flour_pct)}
+              Ratio {formatPct(calcPf.ratio)} &middot; BP {formatPct(calcPf.total_bakers_pct)} &middot; PF Flour {formatPct(calcPf.prefermented_flour_pct)}
             </span>
           {/if}
         </CardHeader>
@@ -1021,10 +1183,19 @@
               </thead>
               <tbody>
                 {#each ingredients as ing (ing.id)}
-                  {#if ing.category !== 'PREFERMENT' && gramsForPf[ing.id] != null}
+                  {#if (ing.category !== 'PREFERMENT' || ing.id === pfIng.id) && gramsForPf[ing.id] != null}
                     {@const bp = ing.preferment_bakers_pcts[pfIng.id]}
+                    {@const isSelfRef = ing.id === pfIng.id}
+                    {@const isRequired = isSelfRef || pfRequiredCats.includes(ing.category)}
                     <tr class="group border-b border-border last:border-0 transition-colors hover:bg-indigo-50/30">
-                      <td class="px-4 py-2 font-medium">{ing.name || '(unnamed)'}</td>
+                      <td class="px-4 py-2 font-medium">
+                        {ing.name || '(unnamed)'}
+                        {#if isSelfRef}
+                          <span class="ml-1 text-[10px] text-muted-foreground">(starter)</span>
+                        {:else if isRequired}
+                          <span class="ml-1 text-[10px] text-muted-foreground">(required)</span>
+                        {/if}
+                      </td>
                       <td class="px-4 py-2">{@render categoryBadge(ing.category)}</td>
                       <td class="px-4 py-2">
                         <input
@@ -1047,9 +1218,11 @@
                         {bp != null ? formatPct(bp) : '-'}
                       </td>
                       <td class="px-4 py-2">
-                        <span class="opacity-0 group-hover:opacity-100 transition-opacity">
-                          {@render removeBtn(() => removeIngredientFromPf(pfIng.id, ing.id), 'Remove from pre-ferment')}
-                        </span>
+                        {#if !isRequired}
+                          <span class="opacity-0 group-hover:opacity-100 transition-opacity">
+                            {@render removeBtn(() => removeIngredientFromPf(pfIng.id, ing.id), 'Remove from pre-ferment')}
+                          </span>
+                        {/if}
                       </td>
                     </tr>
                   {/if}

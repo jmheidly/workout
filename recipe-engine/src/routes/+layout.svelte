@@ -12,7 +12,10 @@
 <div class="min-h-screen bg-background text-foreground">
   <header class="sticky top-0 z-20 border-b border-border bg-background">
     <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-      <a href="/recipes" class="text-lg font-semibold">Recipe Engine</a>
+      <nav class="flex items-center gap-4">
+        <a href="/recipes" class="text-lg font-semibold">Recipe Engine</a>
+        <a href="/mixers" class="text-sm text-muted-foreground transition-colors hover:text-foreground">Mixers</a>
+      </nav>
       {#if data.user}
         <div class="flex items-center gap-4">
           <span class="text-sm text-muted-foreground">{data.user.email}</span>

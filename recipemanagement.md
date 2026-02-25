@@ -42,8 +42,8 @@ This is the **universal foundation** for a recipe management engine. It handles 
 |-----------|---------|
 | Building any recipe from ingredients + quantities | §2 |
 | Calculating all dough stages from Baker's % | §4 |
-| Any number of pre-ferments with chained builds | §5 |
-| DAG validation for pre-ferment dependencies | §5.5 |
+| Any number of pre-ferments with self-reference decomposition | §5 |
+| Pre-ferment calculation ordering | §5.4 |
 | Production scaling (by pieces, dough weight, flour weight) | §4.12 |
 | Water temperature targeting | §6 |
 | Mixer friction compensation | §7 |
@@ -187,7 +187,6 @@ For a recipe with N ingredients (including P pre-ferment rows), the logical colu
 | For each PREFERMENT row p: | | |
 | **BP_p** | Baker's % within pre-ferment p | INPUT (per ingredient) |
 | **QTY_p** | Quantity within pre-ferment p | CALCULATED |
-| **B** | % of total flour (total formula) | CALCULATED |
 | **C** | Total formula quantity | CALCULATED |
 | **F** | Final dough Baker's % | CALCULATED |
 | **G** | Final dough quantity | CALCULATED |
@@ -253,7 +252,6 @@ RecipeIngredient {
   // ---- ALL BELOW ARE CALCULATED (never stored) ----
   // overall_bakers_pct                 // TFQ[i] / SUM(TFQ_flours) — the "D" column
   // total_formula_qty                  // "C" column
-  // pct_of_total_flour                 // "B" column
   // final_dough_bakers_pct             // "F" column
   // final_dough_qty                    // "G" column
   // per_item_weight                    // "H" column
@@ -294,10 +292,8 @@ Preferment (auto-derived from RecipeIngredient where category == PREFERMENT) {
   // Managed by the engine:
   enabled: boolean                      // toggle on/off without deleting the row
   type: PrefermentType                  // auto-suggested from name, or baker overrides
-
-  // Optional: for chained builds (e.g. First Feed → Levain)
-  base_source_ingredient_id: uuid|null  // if set, base_qty is derived from another
-                                        // pre-ferment's calculated output instead of K
+  ddt: number | null                    // per-PF DDT in °C; null = inherit recipe DDT
+  fermentation_duration_min: integer | null  // fermentation time in minutes; null = use type default
 
   // Baker's % inputs for each ingredient within this pre-ferment
   // are stored on: RecipeIngredient.preferment_bakers_pcts[this.ingredient_id]
@@ -324,7 +320,6 @@ enum PrefermentType {
   LEVAIN          // Sourdough culture build — can be liquid or stiff
   PATE_FERMENTEE  // "Old dough" — a piece of previous day's dough
   SPONGE          // Enriched pre-ferment with sugar/dairy
-  FIRST_FEED      // Starter maintenance/refresh build
   CUSTOM          // User-defined
 }
 ```
@@ -336,14 +331,36 @@ enum PrefermentType {
 ```
 MixerProfile {
   id: uuid
-  name: string                          // "Caplain", "Hobart A200", "KitchenAid Pro"
+  user_id: uuid
+  name: string                          // "Caplain", "Haussler", "Bhk"
   type: enum                            // SPIRAL, PLANETARY, FORK, HAND
-  friction_factor: number               // °C added during mixing
-  speed_settings: [
-    { speed: string, typical_duration_min: number }
-  ]
+  friction_factor: number               // base °C added during mixing
+  first_speed_rpm: number               // 1st speed RPM
+  second_speed_rpm: number              // 2nd speed RPM
+  calibrations: [MixerCalibration]      // per mix-type 1st speed rounds
 }
 ```
+
+### 3.6.1 MixerCalibration
+
+```
+MixerCalibration {
+  id: uuid
+  mixer_id: uuid
+  mix_type: string                      // "Improved Mix", "Intensive Mix", "Short Improved"
+  first_speed_rounds: number            // revolutions at 1st speed for this mix type
+  // UNIQUE(mixer_id, mix_type)
+}
+```
+
+### 3.6.2 MixType (System Constants)
+
+| Mix Type | Target Rounds | Friction Mult | Has 2nd Speed |
+|----------|--------------|---------------|---------------|
+| Short Mix | 600 | 0.7× | No |
+| Improved Mix | 1000 | 1.0× | Yes |
+| Intensive Mix | 1600 | 1.3× | Yes |
+| Short Improved | 400 | 0.5× | Yes |
 
 ### 3.7 FermentationStage
 
@@ -419,11 +436,10 @@ total_recipe_weight  = sum of K values for ALL ingredients       // "K31"
 
 ### 4.2 Overall Baker's Percentage (Column D)
 
-Each ingredient's Total Formula Quantity as a percentage of Total Formula Flour. This matches the Excel reference Column B — it reflects the ingredient's true proportion across all dough stages, including decomposed pre-ferment self-references:
+Each ingredient's **total formula quantity** as a percentage of total formula flour. This uses TFQ (not K), so pre-ferment contributions are included and PREFERMENT-category rows show 0%:
 
 ```python
 def calc_overall_bakers_pct(ingredient, all_ingredients, all_preferments):
-    tfq = calc_total_formula_qty(ingredient, all_ingredients, all_preferments)  # after decomposition
     total_formula_flour = sum(
         calc_total_formula_qty(i, all_ingredients, all_preferments)
         for i in all_ingredients
@@ -431,14 +447,15 @@ def calc_overall_bakers_pct(ingredient, all_ingredients, all_preferments):
     )
     if total_formula_flour == 0:
         return 0
+    tfq = calc_total_formula_qty(ingredient, all_ingredients, all_preferments)
     return tfq / total_formula_flour
 ```
 
-**Note:** For the original sheet, Column D was used specifically as the "Poolish Baker's %" — a manually-entered input rather than a calculated value. In the generalized engine, the overall Baker's % is always calculated from Total Formula Quantities (after PF self-reference decomposition), and each pre-ferment's Baker's % is a separate input stored in `preferment_bakers_pcts`.
+**Note:** This matches the spreadsheet's Column C behavior. PREFERMENT rows have TFQ = 0, so their Overall BP = 0%. Water shows true hydration (e.g. 75% for a baguette). Each pre-ferment's Baker's % is a separate input stored in `preferment_bakers_pcts`.
 
-### 4.3 Pre-ferment Ratios
+### 4.3 Pre-ferment Ratio
 
-Each pre-ferment's ratio to total flour:
+The ratio of a pre-ferment's total weight (K) to the recipe's total flour weight. Tells the baker what proportion of their flour base the pre-ferment represents — a quick sanity check that the PF size is appropriate for the formula.
 
 ```python
 def calc_preferment_ratio(preferment, all_ingredients):
@@ -447,6 +464,10 @@ def calc_preferment_ratio(preferment, all_ingredients):
         return 0
     return preferment.base_qty / flour_total
 ```
+
+**Example:** French Baguette — Poolish K = 400g, Bread flour K = 1000g → ratio = 40%. This means the poolish weighs 40% of the total flour, which is typical for a poolish-based baguette.
+
+**Display:** Stored as a decimal (0.40), displayed as a percentage (40.00%) in the UI for consistency with other Baker's % values.
 
 ### 4.4 Pre-ferment Internal Quantities (Columns M, O, Q, S)
 
@@ -479,39 +500,6 @@ def calc_preferment_qty(preferment, ingredient, all_ingredients):
 ```
 
 **This one formula replaces what was columns M, O, Q, and S in the sheet.** It works for any pre-ferment — Poolish, Levain, Biga, Sponge, or any custom type.
-
-**Special case — First Feed / Starter maintenance:**
-The First Feed used `M27` (Levain's calculated quantity) as its base instead of a ratio. To handle this generically:
-
-```python
-def calc_preferment_qty_v2(preferment, ingredient, all_ingredients, all_preferments):
-    """
-    Extended version that supports pre-ferments whose base is
-    another pre-ferment's calculated quantity.
-    """
-    if not preferment.enabled:
-        return 0
-
-    # Check if this pre-ferment's base is derived from another
-    if preferment.base_source_preferment_id:
-        parent_pf = find_preferment(all_preferments, preferment.base_source_preferment_id)
-        base_value = calc_preferment_qty(parent_pf, parent_pf.ingredient_row, all_ingredients)
-    else:
-        base_value = preferment.base_qty
-
-    bp = ingredient.preferment_bakers_pcts.get(preferment.id, 0) or 0
-    if bp == 0 or base_value == 0:
-        return 0
-
-    pf_total_bp = sum(
-        i.preferment_bakers_pcts.get(preferment.id, 0) or 0
-        for i in all_ingredients
-    )
-    if pf_total_bp == 0:
-        return 0
-
-    return (base_value / pf_total_bp) * bp
-```
 
 ### 4.5 Pre-ferment Breakdown
 
@@ -623,14 +611,12 @@ def calc_final_dough_qty_v2(ingredient, all_ingredients, all_preferments):
 
 ### 4.7 Total Formula Quantity (Column C)
 
-The overall amount of each ingredient across ALL dough stages. Computed in two phases:
-
-**Phase 1 — Direct contributions:**
+The overall amount of each ingredient across ALL dough stages:
 
 ```python
 def calc_total_formula_qty(ingredient, all_ingredients, all_preferments):
     """
-    Total formula = base qty + sum of pre-ferment contributions.
+    Total formula = what's in final dough + what's in all pre-ferments.
 
     For regular ingredients:
       C[i] = K[i] + sum(pre-ferment contributions of this ingredient)
@@ -652,53 +638,31 @@ def calc_total_formula_qty(ingredient, all_ingredients, all_preferments):
     return total
 ```
 
-**Phase 2 — Pre-ferment self-reference decomposition:**
-
-When a pre-ferment references itself (e.g. Levain contains 0.25 BP of "Levain" = old starter), the self-referencing quantity represents old starter that itself contains flour, water, etc. For the Total Formula to be accurate, this self-quantity must be decomposed back into its constituent ingredients proportionally:
+**Self-reference decomposition (§4.7.1):** When a pre-ferment references itself (e.g. Levain contains 0.25 BP of "Levain" = old starter seed), the self-referencing quantity is decomposed proportionally among the non-self, non-PF contributors based on their Baker's % within that pre-ferment. This ensures accurate analytical values (hydration, % of total flour, pre-fermented flour %). Production values (final dough, per-item, batch) are computed from pre-decomposition TFQ and are unaffected.
 
 ```python
-def decompose_pf_self_references(total_formula_qtys, all_ingredients, all_preferments, pf_breakdowns):
-    """
-    Mutates total_formula_qtys in place. Must run AFTER final dough quantities
-    are computed (so production values use the pre-decomposition TFQ).
-    """
-    for pf in all_preferments:
-        self_qty = pf_breakdowns[pf.id].get(pf.id, 0)
-        if self_qty <= 0:
+# Self-reference decomposition — runs after TFQ and finalDoughQtys,
+# before totalFormulaFlour calculation
+for pf in preferment_ingredients:
+    self_qty = pf_breakdowns[pf.id].get(pf.id, 0)
+    if self_qty <= 0:
+        continue
+
+    non_self_bp_total = 0
+    contributors = []
+    for ing in all_ingredients:
+        if ing.id == pf.id or ing.category == PREFERMENT:
             continue
+        bp = ing.preferment_bakers_pcts.get(pf.id, 0)
+        if bp > 0:
+            contributors.append((ing.id, bp))
+            non_self_bp_total += bp
 
-        # Collect non-self, non-PREFERMENT ingredients with a BP in this PF
-        contributors = []
-        for ing in all_ingredients:
-            if ing.id == pf.id or ing.category == PREFERMENT:
-                continue
-            bp = ing.preferment_bakers_pcts.get(pf.id)
-            if bp and bp > 0:
-                contributors.append((ing.id, bp))
+    if non_self_bp_total <= 0:
+        continue
 
-        non_self_bp_total = sum(bp for _, bp in contributors)
-        if non_self_bp_total <= 0:
-            continue
-
-        # Distribute self-qty proportionally among contributors
-        for ing_id, bp in contributors:
-            total_formula_qtys[ing_id] += self_qty * (bp / non_self_bp_total)
-```
-
-**Ordering matters:** Final dough quantities must be computed from the Phase 1 TFQ values (before decomposition) so that production quantities are unaffected. The decomposition only affects analytical values: Overall Baker's %, % of Total Flour, Hydration, and Pre-fermented Flour %.
-
-### 4.8 Percentage of Total Flour (Column B)
-
-```python
-def calc_pct_of_total_flour(ingredient, all_ingredients, all_preferments):
-    flour_total_formula = sum(
-        calc_total_formula_qty(i, all_ingredients, all_preferments)
-        for i in all_ingredients
-        if i.category == FLOUR
-    )
-    if flour_total_formula == 0:
-        return 0
-    return calc_total_formula_qty(ingredient, all_ingredients, all_preferments) / flour_total_formula
+    for (ing_id, bp) in contributors:
+        total_formula_qtys[ing_id] += self_qty * (bp / non_self_bp_total)
 ```
 
 ### 4.9 Final Dough Baker's Percentage (Column F)
@@ -914,85 +878,59 @@ When the baker creates a new pre-ferment, suggest defaults based on type:
 | LEVAIN | 1.0 | 0.5–1.0 | — | Sourdough, no yeast |
 | PATE_FERMENTEE | 1.0 | 0.6 | 0.001 | Mimics the main dough |
 | SPONGE | 1.0 | 0.6 | 0.01 | Enriched, more yeast |
-| FIRST_FEED | 1.0 | 0.5–1.0 | — | Starter refresh |
 
 These are suggestions only — the baker can change any value.
 
-### 5.4 Dependent Pre-ferments (Chained Builds)
+### 5.4 Pre-ferment Calculation Order
 
-Some recipes have pre-ferments that feed into other pre-ferments (e.g. First Feed → Levain → Dough). Since pre-ferments are just ingredient rows, this is expressed as:
-
-```
-Ingredient row "First Feed" (PREFERMENT, K = 244)
-  → base_source_ingredient_id points to the "Levain" ingredient row
-  → Instead of using K directly, the engine uses the Levain's calculated
-    self-referencing quantity (M27 in the original sheet) as the base
-```
-
-### 5.5 DAG Validation (Required)
-
-Pre-ferment dependencies form a directed graph. The engine **must** validate this graph before calculating.
+All pre-ferments are independent — they each use their own `base_qty` (K column) as the base value. The engine calculates them in ingredient order.
 
 ```python
 def resolve_preferment_order(all_ingredients):
-    """
-    Topological sort of pre-ferments to determine calculation order.
-    Raises error if circular dependency detected.
-    """
-    pf_ingredients = [i for i in all_ingredients if i.category == PREFERMENT]
-
-    # Build adjacency: if PF_A depends on PF_B, edge from B → A
-    graph = {pf.id: [] for pf in pf_ingredients}
-    in_degree = {pf.id: 0 for pf in pf_ingredients}
-
-    for pf in pf_ingredients:
-        if pf.base_source_ingredient_id:
-            parent_id = pf.base_source_ingredient_id
-            if parent_id in graph:
-                graph[parent_id].append(pf.id)
-                in_degree[pf.id] += 1
-
-    # Kahn's algorithm — topological sort
-    queue = [pf_id for pf_id, deg in in_degree.items() if deg == 0]
-    sorted_order = []
-
-    while queue:
-        current = queue.pop(0)
-        sorted_order.append(current)
-        for dependent in graph[current]:
-            in_degree[dependent] -= 1
-            if in_degree[dependent] == 0:
-                queue.append(dependent)
-
-    if len(sorted_order) != len(pf_ingredients):
-        raise CircularDependencyError(
-            "Circular pre-ferment dependency detected. "
-            "Check your chained build configuration."
-        )
-
-    return sorted_order  # calculate in this order
-
+    """Returns pre-ferment IDs in ingredient order."""
+    return [i.id for i in all_ingredients if i.category == PREFERMENT]
 
 def recalculate_all(recipe):
-    """Master recalculation — processes pre-ferments in dependency order."""
+    """Master recalculation — processes all pre-ferments then derives everything else."""
     pf_order = resolve_preferment_order(recipe.ingredients)
 
-    # Calculate pre-ferments in topological order
     for pf_id in pf_order:
         calc_preferment_quantities(pf_id, recipe)
 
-    # Then calculate final dough, per-item, batch for all ingredients
     for ing in recipe.ingredients:
         calc_final_dough_qty_v2(ing, recipe)
         calc_per_item_weight(ing, recipe)
         calc_batch_qty(ing, recipe)
 ```
 
-**Rules:**
-- Engine runs topological sort on every recalculation
-- If cycle detected → reject the save, show error to baker
-- Independent pre-ferments (no `base_source_ingredient_id`) have in-degree 0 and calculate first
-- Dependent pre-ferments calculate after their parent
+### 5.5 Per-Preferment DDT & Fermentation Duration
+
+Each pre-ferment can have its own **DDT** and **fermentation duration**, stored in `preferment_settings`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `ddt` | `REAL \| null` | `null` (inherit recipe DDT) | Target dough temperature for this PF build |
+| `fermentation_duration_min` | `INTEGER \| null` | `null` (use type default) | How long this PF ferments before the main mix |
+
+**Fermentation duration defaults by type:**
+
+| Type | Default Duration |
+|------|-----------------|
+| POOLISH | 12h (720 min) |
+| BIGA | 16h (960 min) |
+| LEVAIN | 8h (480 min) |
+| PATE_FERMENTEE | 12h (720 min) |
+| SPONGE | 4h (240 min) |
+| CUSTOM | 8h (480 min) |
+
+**Inheritance rules:**
+- `ddt = null` → uses the recipe-level DDT
+- `fermentation_duration_min = null` → uses the type default from the table above
+- Explicit values override the defaults
+
+**Production page usage:** The production page uses these values to compute:
+1. **Water temperature** for each PF (2-factor: `water = DDT × 2 − flour_temp − room_temp`, since PFs are hand-mixed with no friction)
+2. **Start time** = `target_mix_time − fermentation_duration`
 
 ---
 
@@ -1047,43 +985,80 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 
 ---
 
-## 7. Friction Factor System
+## 7. Mixing & Friction System (Rounds-Based)
 
-### 7.1 Defaults by Mixer Type
+### 7.1 Friction Factor Defaults by Mixer Type
 
-| Mixer Type | Friction Factor (°C) |
-|-----------|---------------------|
-| Spiral | 11–17 |
-| Planetary | 6–11 |
-| Fork | 3–6 |
-| Hand | 0–3 |
+| Mixer Type | Friction (°C) | 1st RPM | 2nd RPM | Notes |
+|-----------|--------------|---------|---------|-------|
+| SPIRAL | 14 | 105 | 204 | Most common bakery mixer |
+| PLANETARY | 8 | 80 | 160 | KitchenAid-style |
+| FORK | 5 | 40 | 80 | Low-speed, gentle |
+| HAND | 2 | 0 | 0 | No timer computation |
 
-### 7.2 Mix-Type Multiplier
+### 7.2 Mix Types, Target Rounds & Friction Multipliers
 
-| Mix Type | Multiplier |
-|----------|-----------|
-| Short Mix | 0.7× |
-| Improved Mix | 1.0× |
-| Intensive Mix | 1.3× |
+| Mix Type | Target Rounds (2nd) | Friction Mult | Has 2nd Speed |
+|----------|--------------------|---------------|---------------|
+| Short Mix | 600 | 0.7× | No — 1st speed only |
+| Improved Mix | 1000 | 1.0× | Yes |
+| Intensive Mix | 1600 | 1.3× | Yes |
+| Short Improved | 400 | 0.5× | Yes |
 
-```python
-def effective_friction(mixer_profile, mix_type):
-    multipliers = {"Short Mix": 0.7, "Improved Mix": 1.0, "Intensive Mix": 1.3}
-    return mixer_profile.friction_factor * multipliers.get(mix_type, 1.0)
+```javascript
+effective_friction = friction_factor × friction_mult
 ```
 
-### 7.3 Calibration Over Time
+### 7.3 Rounds-Based Mixing Timer
 
-```python
-def calibrate_friction(ddt, water_temp_used, flour_temp, room_temp, actual_dough_temp, preferment_temp=None):
-    """After a mix, calculate what the actual friction factor was."""
-    temps = [water_temp_used, flour_temp, room_temp]
-    if preferment_temp is not None:
-        temps.append(preferment_temp)
-    factor_count = len(temps)
-    measured_friction = (actual_dough_temp * factor_count) - sum(temps)
-    return measured_friction
+Each mixer profile stores calibrated **1st-speed rounds** per mix type. The engine computes durations:
+
+**For Improved Mix, Intensive Mix, Short Improved:**
 ```
+1st_speed_min = calibration[mix_type].first_speed_rounds / first_speed_rpm
+2nd_speed_min = MIX_TYPES[mix_type].target_rounds / second_speed_rpm
+```
+
+**For Short Mix (1st speed only):**
+```
+1st_speed_min = (calibration['Improved Mix'].first_speed_rounds + 600) / first_speed_rpm
+2nd_speed_min = 0
+```
+
+**Verification table (Caplain: rpm1=105, rpm2=204):**
+
+| Mix Type | 1st Rounds | 1st Min | 2nd Rounds | 2nd Min | Total |
+|----------|-----------|---------|-----------|---------|-------|
+| Short Mix | 420+600=1020 | 9.7 | 0 | 0.0 | 9.7 |
+| Improved Mix | 420 | 4.0 | 1000 | 4.9 | 8.9 |
+| Intensive Mix | 525 | 5.0 | 1600 | 7.8 | 12.8 |
+| Short Improved | 525 | 5.0 | 400 | 2.0 | 7.0 |
+
+### 7.4 Calibration Over Time
+
+After a mix, back-calculate the actual friction factor from measured temperatures:
+
+```javascript
+actual_friction = (actual_dough_temp × factor_count) - sum(water, flour, room [, preferment])
+```
+
+Compare with the mixer profile's `friction_factor × friction_mult` — track drift over time.
+
+### 7.5 Adding a Mixer — User Flow
+
+1. Name the mixer (e.g. "Caplain Spiral")
+2. Choose type → pre-fills defaults from §7.1
+3. Adjust friction factor, RPMs if needed
+4. Enter calibrated 1st-speed rounds for Improved, Intensive, Short Improved
+5. Short Mix is auto-derived (Improved rounds + 600)
+
+### 7.6 Seed Mixer Profiles
+
+| Mixer | Type | Friction | RPM1 | RPM2 | Improved 1st | Intensive 1st | Short Improved 1st |
+|-------|------|---------|------|------|-------------|--------------|-------------------|
+| Caplain | SPIRAL | 12 | 105 | 204 | 420 | 525 | 525 |
+| Haussler | SPIRAL | 14 | 130 | 180 | 455 | 455 | 520 |
+| Bhk | SPIRAL | 10 | 150 | 300 | 420 | 450 | 525 |
 
 ---
 
@@ -1200,10 +1175,32 @@ No hard-coded steps — each recipe defines its own sequence. Seed recipes (§14
 
 ## 11. Loss & Waste Factor
 
-### 11.1 Calculation
+### 11.1 Definitions
+
+**Process Loss %** — The percentage of dough weight lost between the mixer and the oven: dough stuck to bowls, divider waste, shaping scraps, bench trimmings. The baker sets this once per recipe based on experience with their equipment and process. Setting process loss to 5% tells the engine: "scale up all dough quantities by enough to compensate for 5% of the total dough never making it into the oven."
+
+- **Where it applies:** Dividing, pre-shaping, shaping, proofing transfers — any step between "dough off the mixer" and "dough into the oven."
+- **Who sets it:** The baker, based on their shop's workflow. A bakery with a hydraulic divider may lose 1–2%; hand-dividing sticky enriched dough may lose 4–5%.
+- **Currently:** A static value entered in the recipe builder. The baker updates it manually if their process changes.
+- **Production module (future):** Log actual dough-in vs. dough-loaded weights per batch. Compute rolling average process loss across productions of the same recipe and surface it as a suggested update to the recipe's stored value.
+
+**Bake Loss %** — The percentage of piece weight lost during baking, almost entirely from moisture evaporation. A lean baguette at 240°C loses more moisture than a brioche at 175°C. The baker sets this per recipe based on their oven and product type.
+
+- **Where it applies:** From oven entry to oven exit. A piece weighed at 410g going in and 350g coming out has `(410 - 350) / 410 = 14.6%` bake loss.
+- **Who sets it:** The baker, from experience or test bakes.
+- **Currently:** A static value entered in the recipe builder.
+- **Production module (future):** After each bake, the baker records finished piece weight. The system computes `actual_bake_loss = 1 - (finished_weight / raw_scaled_weight)` per batch, maintains a running mean across productions of the same recipe, and surfaces it as a suggested update. Over time, the value self-corrects from real data rather than guesswork.
+
+### 11.2 Calculation
+
+The two losses compound multiplicatively (not additively) because process loss reduces dough before baking, then bake loss reduces piece weight during baking:
 
 ```python
 def calc_adjusted_yield(desired_finished_weight, process_loss_pct, bake_loss_pct):
+    """
+    Raw yield per piece — how much dough to scale per piece
+    so the finished product hits the desired weight.
+    """
     return desired_finished_weight / ((1 - process_loss_pct) * (1 - bake_loss_pct))
 
 def calc_batch_with_loss(recipe):
@@ -1215,21 +1212,36 @@ def calc_batch_with_loss(recipe):
     }
 ```
 
-### 11.2 Example
+**Scale factor** = `raw_yield / desired_yield`. This multiplier is applied to Per Item and Batch columns so every ingredient quantity accounts for both losses.
 
-80g finished, 3% process loss, 12% bake loss:
+### 11.3 Example
+
+80g finished panettone, 3% process loss, 12% bake loss:
 ```
-raw = 80 / (0.97 × 0.88) = 93.7g per piece
+raw = 80 / (0.97 × 0.88) = 93.7g dough per piece
+scale_factor = 93.7 / 80 = 1.171x
 ```
 
-### 11.3 Typical Ranges
+The baker scales 93.7g of dough per piece. After ~3% sticks to equipment during dividing/shaping, ~90.9g enters the oven. After ~12% moisture loss during baking, ~80g comes out.
 
-| Product Type | Process Loss | Bake Loss |
-|-------------|-------------|-----------|
-| Lean bread (baguette, batard) | 2–3% | 12–18% |
-| Enriched bread (brioche, Panettone) | 2–4% | 8–12% |
-| Pastry (croissant) | 3–5% | 10–15% |
-| Pizza | 1–2% | 8–12% |
+### 11.4 Typical Ranges
+
+| Product Type | Process Loss | Bake Loss | Notes |
+|-------------|-------------|-----------|-------|
+| Lean bread (baguette, batard) | 2–3% | 12–18% | High bake loss from high oven temp, steam, thin crust |
+| Enriched bread (brioche, Panettone) | 2–4% | 8–12% | Fats reduce moisture loss; lower oven temp |
+| Pastry (croissant) | 3–5% | 10–15% | Lamination scraps increase process loss |
+| Pizza | 1–2% | 8–12% | Simple shapes, minimal handling |
+
+### 11.5 Production Module Integration (Future)
+
+When the production module tracks batch sessions, loss factors become data-driven:
+
+1. **Per-batch logging:** Baker records `dough_total_weight` (off mixer), `pieces_loaded` (into oven), `finished_piece_weight` (out of oven).
+2. **Actual process loss** = `1 - (pieces_loaded × raw_yield / dough_total_weight)`.
+3. **Actual bake loss** = `1 - (finished_piece_weight / raw_yield)`.
+4. **Rolling mean** across the last N productions of the same recipe → suggested update to recipe's stored values.
+5. **Drift alert:** If actual loss deviates >2 percentage points from the recipe's stored value, surface a warning: "Bake loss averaging 16.2% over last 5 bakes — recipe says 12%. Update?"
 
 ---
 
@@ -1346,12 +1358,11 @@ Quick-reference: every output the engine produces.
 
 | Output | What | Formula | Depends On |
 |--------|------|---------|------------|
-| Overall Baker's % | TFQ[i] / SUM(TFQ_flours) | §4.2 | Total formula (after decomposition) |
+| Overall Baker's % | TFQ[i] / SUM(TFQ_flours) | §4.2 | Total formula |
 | Pre-ferment ratio | PF_base_qty / SUM(K_flours) | §4.3 | K, PF.base_qty |
 | Pre-ferment qty | (ratio × flour / PF_total_BP) × BP[i] | §4.4 | K, PF Baker's % |
-| Total formula qty | K[i] + sum(PF breakdowns for i) + PF self-ref decomposition | §4.7 | K, PF breakdowns |
+| Total formula qty | K[i] + sum(PF breakdowns for i) | §4.7 | K, PF breakdowns |
 | Final dough qty | Total formula - sum(PF contributions) | §4.6 | K, all PF qtys |
-| % of total flour | Total_formula[i] / SUM(Total_formula_flours) | §4.8 | Total formula |
 | Final dough Baker's % | K[i] / SUM(Final_dough_flours) | §4.9 | K, final dough |
 | Per-item weight | Final_dough[i] × yield / G_total | §4.10 | Final dough, yield |
 | Batch qty | Per_item[i] × num_pieces | §4.11 | Per-item, num_pieces |
@@ -1359,6 +1370,9 @@ Quick-reference: every output the engine produces.
 | Pre-fermented flour % | PF_flour / Total_flour | §4.13 | PF breakdown, total |
 | Hydration | Total_water / Total_flour | §4.14 | Total formula |
 | Water temp | (DDT × N) - temps - friction | §6 | DDT, env, mixer |
+| Effective friction | friction_factor × mix_type_mult | §7.2 | Mixer profile, mix type |
+| 1st speed min | calibration_rounds / first_speed_rpm | §7.3 | Mixer profile, mix type |
+| 2nd speed min | target_rounds / second_speed_rpm | §7.3 | Mixer profile, mix type |
 | Adjusted yield | yield / ((1-process_loss)(1-bake_loss)) | §11 | yield, loss % |
 
 **The K model (decided):** K = final dough / base recipe quantity. Pre-ferments add mass on top. Total formula ≥ K. This matches the original spreadsheet behavior and the baker's mental model.
@@ -1414,17 +1428,6 @@ Quick-reference: every output the engine produces.
         "Sugar": 0.24,
         "Egg Yolks": 0.16,
         "Levain": 0.25
-      }
-    },
-    {
-      "name": "First Feed",
-      "type": "FIRST_FEED",
-      "enabled": true,
-      "base_source": "Levain",
-      "bakers_pcts": {
-        "Bread flour": 1.0,
-        "Water": 0.5,
-        "Levain": 1.0
       }
     }
   ]

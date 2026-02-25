@@ -58,7 +58,7 @@ export function calculateRecipe(recipe) {
     totalFormulaQtys[ing.id] = calcTotalFormulaQty(ing, pfBreakdowns, prefermentIngredients)
   }
 
-  // §4.6v2: Final dough quantities (computed before decomposition so production values are unaffected)
+  // §4.6v2: Final dough quantities (computed from pre-decomposition TFQ)
   const finalDoughQtys = {}
   for (const ing of ingredients) {
     finalDoughQtys[ing.id] = calcFinalDoughQty(
@@ -69,12 +69,12 @@ export function calculateRecipe(recipe) {
     )
   }
 
-  // Decompose PF self-references (old starter) into constituent ingredients for Total Formula
+  // Self-reference decomposition: distribute PF self-qty proportionally
+  // into TFQ for accurate analytical values (hydration, % of total flour)
   for (const pf of prefermentIngredients) {
     const selfQty = pfBreakdowns[pf.id]?.[pf.id] || 0
     if (selfQty <= 0) continue
 
-    // Collect non-self, non-PREFERMENT ingredients with a BP in this PF
     let nonSelfBPTotal = 0
     const contributors = []
     for (const ing of ingredients) {
@@ -87,7 +87,6 @@ export function calculateRecipe(recipe) {
     }
     if (nonSelfBPTotal <= 0) continue
 
-    // Distribute self-qty proportionally among contributors
     for (const c of contributors) {
       totalFormulaQtys[c.id] += selfQty * (c.bp / nonSelfBPTotal)
     }
@@ -125,11 +124,8 @@ export function calculateRecipe(recipe) {
 
   // Build per-ingredient calculated values
   const calculatedIngredients = ingredients.map((ing) => {
-    // §4.2: Overall Baker's %
+    // §4.2: Overall Baker's % (TFQ-based — matches spreadsheet Column C)
     const overallBakersPct = safeDivide(totalFormulaQtys[ing.id], totalFormulaFlour)
-
-    // §4.8: % of total flour
-    const pctOfTotalFlour = safeDivide(totalFormulaQtys[ing.id], totalFormulaFlour)
 
     // §4.9: Final dough Baker's %
     let finalDoughBakersPct
@@ -162,7 +158,6 @@ export function calculateRecipe(recipe) {
       sort_order: ing.sort_order,
       overall_bakers_pct: overallBakersPct,
       total_formula_qty: totalFormulaQtys[ing.id],
-      pct_of_total_flour: pctOfTotalFlour,
       final_dough_bakers_pct: finalDoughBakersPct,
       final_dough_qty: finalDoughQtys[ing.id],
       per_item_weight: perItemWeight,
@@ -260,7 +255,7 @@ export function calculateRecipe(recipe) {
  * @param {Ingredient} pf - the pre-ferment ingredient
  * @param {Ingredient[]} allIngredients
  * @param {Object} pfMap - id -> preferment ingredient
- * @param {Object} pfBreakdowns - already-calculated breakdowns (for chained builds)
+ * @param {Object} pfBreakdowns - already-calculated breakdowns
  * @param {number} baseFlourQty
  * @returns {Object.<string, number>}
  */
@@ -269,19 +264,6 @@ function calcPrefermentBreakdown(pf, allIngredients, pfMap, pfBreakdowns, baseFl
   const enabled = settings.enabled === 1 || settings.enabled === true
 
   if (!enabled || pf.base_qty === 0) return {}
-
-  // §5.4: Determine base value (own K, or chained from parent PF)
-  let baseValue = pf.base_qty
-  if (settings.base_source_ingredient_id) {
-    const parentPf = pfMap[settings.base_source_ingredient_id]
-    if (parentPf && pfBreakdowns[parentPf.id]) {
-      // Use the parent PF's self-referencing quantity
-      // (how much of the parent PF ingredient goes into the parent PF)
-      baseValue = pfBreakdowns[parentPf.id][parentPf.id] || 0
-    }
-  }
-
-  if (baseValue === 0) return {}
 
   // Sum of all Baker's % within this PF
   const pfTotalBp = allIngredients.reduce((sum, ing) => {
@@ -295,7 +277,7 @@ function calcPrefermentBreakdown(pf, allIngredients, pfMap, pfBreakdowns, baseFl
   for (const ing of allIngredients) {
     const bp = ing.preferment_bakers_pcts?.[pf.id]
     if (bp != null && bp > 0) {
-      breakdown[ing.id] = (baseValue / pfTotalBp) * bp
+      breakdown[ing.id] = (pf.base_qty / pfTotalBp) * bp
     }
   }
 
@@ -365,42 +347,8 @@ function calcFinalDoughQty(ingredient, totalFormulaQty, pfBreakdowns, preferment
 function resolvePrefermentOrder(pfIngredients) {
   if (pfIngredients.length === 0) return []
 
-  // Build adjacency: if PF_A depends on PF_B (base_source = B), edge B → A
-  const graph = Object.fromEntries(pfIngredients.map((pf) => [pf.id, []]))
-  const inDegree = Object.fromEntries(pfIngredients.map((pf) => [pf.id, 0]))
-
-  for (const pf of pfIngredients) {
-    const parentId = pf.preferment_settings?.base_source_ingredient_id
-    if (parentId && graph[parentId] !== undefined) {
-      graph[parentId].push(pf.id)
-      inDegree[pf.id]++
-    }
-  }
-
-  // Kahn's algorithm
-  const queue = pfIngredients
-    .filter((pf) => inDegree[pf.id] === 0)
-    .map((pf) => pf.id)
-  const sorted = []
-
-  while (queue.length > 0) {
-    const current = queue.shift()
-    sorted.push(current)
-    for (const dependent of graph[current]) {
-      inDegree[dependent]--
-      if (inDegree[dependent] === 0) {
-        queue.push(dependent)
-      }
-    }
-  }
-
-  if (sorted.length !== pfIngredients.length) {
-    throw new Error(
-      'Circular pre-ferment dependency detected. Check your chained build configuration.'
-    )
-  }
-
-  return sorted
+  // All PFs are independent — return in original order
+  return pfIngredients.map((pf) => pf.id)
 }
 
 // ─── Loss & Waste (§11) ──────────────────────────────────────────────────────

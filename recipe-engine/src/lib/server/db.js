@@ -65,8 +65,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS preferment_settings (
       ingredient_id TEXT PRIMARY KEY REFERENCES recipe_ingredients(id) ON DELETE CASCADE,
       enabled INTEGER NOT NULL DEFAULT 1,
-      type TEXT NOT NULL DEFAULT 'CUSTOM',
-      base_source_ingredient_id TEXT REFERENCES recipe_ingredients(id)
+      type TEXT NOT NULL DEFAULT 'CUSTOM'
     );
 
     CREATE TABLE IF NOT EXISTS process_steps (
@@ -81,6 +80,24 @@ function initSchema(db) {
       mixer_speed TEXT,
       notes TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS mixer_profiles (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'SPIRAL',
+      friction_factor REAL NOT NULL DEFAULT 12,
+      first_speed_rpm REAL NOT NULL DEFAULT 105,
+      second_speed_rpm REAL NOT NULL DEFAULT 204
+    );
+
+    CREATE TABLE IF NOT EXISTS mixer_calibrations (
+      id TEXT PRIMARY KEY,
+      mixer_id TEXT NOT NULL REFERENCES mixer_profiles(id) ON DELETE CASCADE,
+      mix_type TEXT NOT NULL,
+      first_speed_rounds REAL NOT NULL,
+      UNIQUE(mixer_id, mix_type)
+    );
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -89,6 +106,10 @@ function initSchema(db) {
     'ALTER TABLE recipes ADD COLUMN bake_loss_pct REAL NOT NULL DEFAULT 0',
     'ALTER TABLE recipes ADD COLUMN autolyse INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE recipes ADD COLUMN autolyse_duration_min INTEGER NOT NULL DEFAULT 20',
+    'ALTER TABLE preferment_settings ADD COLUMN ddt REAL',
+    'ALTER TABLE preferment_settings ADD COLUMN fermentation_duration_min INTEGER',
+    'ALTER TABLE recipes ADD COLUMN mixer_profile_id TEXT',
+    "ALTER TABLE recipes ADD COLUMN mix_type TEXT NOT NULL DEFAULT 'Improved Mix'",
   ]
   for (const sql of migrations) {
     try {
@@ -221,8 +242,8 @@ export function createRecipe(userId, data) {
   const recipeId = generateId()
 
   const insertRecipe = db.prepare(`
-    INSERT INTO recipes (id, user_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO recipes (id, user_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const insertIngredient = db.prepare(`
@@ -236,8 +257,8 @@ export function createRecipe(userId, data) {
   `)
 
   const insertPfSettings = db.prepare(`
-    INSERT INTO preferment_settings (ingredient_id, enabled, type, base_source_ingredient_id)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO preferment_settings (ingredient_id, enabled, type, ddt, fermentation_duration_min)
+    VALUES (?, ?, ?, ?, ?)
   `)
 
   const txn = db.transaction(() => {
@@ -250,7 +271,9 @@ export function createRecipe(userId, data) {
       data.process_loss_pct || 0,
       data.bake_loss_pct || 0,
       data.autolyse ? 1 : 0,
-      data.autolyse_duration_min || 20
+      data.autolyse_duration_min || 20,
+      data.mixer_profile_id || null,
+      data.mix_type || 'Improved Mix'
     )
 
     if (data.ingredients) {
@@ -263,7 +286,8 @@ export function createRecipe(userId, data) {
             ingId,
             ing.preferment_settings.enabled ? 1 : 0,
             ing.preferment_settings.type || 'CUSTOM',
-            ing.preferment_settings.base_source_ingredient_id || null
+            ing.preferment_settings.ddt ?? null,
+            ing.preferment_settings.fermentation_duration_min ?? null
           )
         }
       }
@@ -390,6 +414,7 @@ export function getRecipesByUser(userId) {
     .prepare(
       `SELECT r.id, r.name, r.yield_per_piece, r.ddt,
               r.process_loss_pct, r.bake_loss_pct, r.autolyse,
+              r.mixer_profile_id, r.mix_type,
               r.created_at, r.updated_at,
               (SELECT COUNT(*) FROM recipe_ingredients WHERE recipe_id = r.id) as ingredient_count,
               (SELECT COUNT(*) FROM process_steps WHERE recipe_id = r.id) as step_count
@@ -411,6 +436,7 @@ export function updateRecipe(id, data) {
     db.prepare(
       `UPDATE recipes SET name = ?, yield_per_piece = ?, ddt = ?,
        process_loss_pct = ?, bake_loss_pct = ?, autolyse = ?, autolyse_duration_min = ?,
+       mixer_profile_id = ?, mix_type = ?,
        updated_at = datetime('now')
        WHERE id = ?`
     ).run(
@@ -421,6 +447,8 @@ export function updateRecipe(id, data) {
       data.bake_loss_pct || 0,
       data.autolyse ? 1 : 0,
       data.autolyse_duration_min || 20,
+      data.mixer_profile_id || null,
+      data.mix_type || 'Improved Mix',
       id
     )
 
@@ -437,8 +465,8 @@ export function updateRecipe(id, data) {
          VALUES (?, ?, ?)`
       )
       const insertPfSettings = db.prepare(
-        `INSERT INTO preferment_settings (ingredient_id, enabled, type, base_source_ingredient_id)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO preferment_settings (ingredient_id, enabled, type, ddt, fermentation_duration_min)
+         VALUES (?, ?, ?, ?, ?)`
       )
 
       // First pass: insert all ingredients
@@ -452,7 +480,8 @@ export function updateRecipe(id, data) {
             ingId,
             ing.preferment_settings.enabled ? 1 : 0,
             ing.preferment_settings.type || 'CUSTOM',
-            ing.preferment_settings.base_source_ingredient_id || null
+            ing.preferment_settings.ddt ?? null,
+            ing.preferment_settings.fermentation_duration_min ?? null
           )
         }
       }
@@ -505,4 +534,119 @@ export function updateRecipe(id, data) {
 export function deleteRecipe(id) {
   const db = getDb()
   db.prepare('DELETE FROM recipes WHERE id = ?').run(id)
+}
+
+// ─── Mixer Profiles ──────────────────────────────────────────────────────────
+
+/**
+ * @param {string} userId
+ * @returns {Array<object>}
+ */
+export function getMixerProfiles(userId) {
+  const db = getDb()
+  const profiles = db
+    .prepare('SELECT * FROM mixer_profiles WHERE user_id = ? ORDER BY name')
+    .all(userId)
+
+  const calibrations = db
+    .prepare(
+      `SELECT mc.* FROM mixer_calibrations mc
+       JOIN mixer_profiles mp ON mp.id = mc.mixer_id
+       WHERE mp.user_id = ?`
+    )
+    .all(userId)
+
+  const calMap = {}
+  for (const cal of calibrations) {
+    if (!calMap[cal.mixer_id]) calMap[cal.mixer_id] = []
+    calMap[cal.mixer_id].push({
+      mix_type: cal.mix_type,
+      first_speed_rounds: cal.first_speed_rounds,
+    })
+  }
+
+  return profiles.map((p) => ({ ...p, calibrations: calMap[p.id] || [] }))
+}
+
+/**
+ * @param {string} id
+ * @returns {object | null}
+ */
+export function getMixerProfile(id) {
+  const db = getDb()
+  const profile = db.prepare('SELECT * FROM mixer_profiles WHERE id = ?').get(id)
+  if (!profile) return null
+
+  const calibrations = db
+    .prepare('SELECT mix_type, first_speed_rounds FROM mixer_calibrations WHERE mixer_id = ?')
+    .all(id)
+
+  return { ...profile, calibrations }
+}
+
+/**
+ * @param {string} userId
+ * @param {object} data
+ * @returns {string} mixer profile id
+ */
+export function createMixerProfile(userId, data) {
+  const db = getDb()
+  const id = generateId()
+
+  const txn = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO mixer_profiles (id, user_id, name, type, friction_factor, first_speed_rpm, second_speed_rpm)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, userId, data.name, data.type, data.friction_factor, data.first_speed_rpm, data.second_speed_rpm)
+
+    if (data.calibrations) {
+      const insertCal = db.prepare(
+        `INSERT INTO mixer_calibrations (id, mixer_id, mix_type, first_speed_rounds)
+         VALUES (?, ?, ?, ?)`
+      )
+      for (const cal of data.calibrations) {
+        insertCal.run(generateId(), id, cal.mix_type, cal.first_speed_rounds)
+      }
+    }
+  })
+
+  txn()
+  return id
+}
+
+/**
+ * @param {string} id
+ * @param {object} data
+ */
+export function updateMixerProfile(id, data) {
+  const db = getDb()
+
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE mixer_profiles SET name = ?, type = ?, friction_factor = ?,
+       first_speed_rpm = ?, second_speed_rpm = ?
+       WHERE id = ?`
+    ).run(data.name, data.type, data.friction_factor, data.first_speed_rpm, data.second_speed_rpm, id)
+
+    db.prepare('DELETE FROM mixer_calibrations WHERE mixer_id = ?').run(id)
+    if (data.calibrations) {
+      const insertCal = db.prepare(
+        `INSERT INTO mixer_calibrations (id, mixer_id, mix_type, first_speed_rounds)
+         VALUES (?, ?, ?, ?)`
+      )
+      for (const cal of data.calibrations) {
+        insertCal.run(generateId(), id, cal.mix_type, cal.first_speed_rounds)
+      }
+    }
+  })
+
+  txn()
+}
+
+/**
+ * @param {string} id
+ */
+export function deleteMixerProfile(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM mixer_profiles WHERE id = ?').run(id)
 }
