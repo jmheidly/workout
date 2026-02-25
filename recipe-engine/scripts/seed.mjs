@@ -1,0 +1,305 @@
+/**
+ * Seed script — inserts 4 recipes from spec §14 into the DB.
+ * Run: node scripts/seed.mjs
+ */
+
+import Database from 'better-sqlite3'
+import { randomUUID } from 'crypto'
+import CryptoJS from 'crypto-js'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DB_PATH = path.resolve(__dirname, '../data/recipe-engine.db')
+
+const db = new Database(DB_PATH)
+db.pragma('journal_mode = WAL')
+db.pragma('foreign_keys = ON')
+
+// Ensure schema exists
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS recipes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    yield_per_piece REAL NOT NULL DEFAULT 0,
+    ddt REAL NOT NULL DEFAULT 24,
+    process_loss_pct REAL NOT NULL DEFAULT 0,
+    bake_loss_pct REAL NOT NULL DEFAULT 0,
+    autolyse INTEGER NOT NULL DEFAULT 0,
+    autolyse_duration_min INTEGER NOT NULL DEFAULT 20,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS recipe_ingredients (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    base_qty REAL NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS preferment_bakers_pcts (
+    ingredient_id TEXT NOT NULL REFERENCES recipe_ingredients(id) ON DELETE CASCADE,
+    preferment_ingredient_id TEXT NOT NULL REFERENCES recipe_ingredients(id) ON DELETE CASCADE,
+    bakers_pct REAL,
+    PRIMARY KEY (ingredient_id, preferment_ingredient_id)
+  );
+  CREATE TABLE IF NOT EXISTS preferment_settings (
+    ingredient_id TEXT PRIMARY KEY REFERENCES recipe_ingredients(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    type TEXT NOT NULL DEFAULT 'CUSTOM',
+    base_source_ingredient_id TEXT REFERENCES recipe_ingredients(id)
+  );
+  CREATE TABLE IF NOT EXISTS process_steps (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    duration_min INTEGER,
+    temperature REAL,
+    mixer_speed TEXT,
+    notes TEXT
+  );
+`)
+
+// Create demo user
+const DEMO_EMAIL = 'demo@example.com'
+const DEMO_PASSWORD = 'demo123'
+const passwordHash = CryptoJS.SHA256(DEMO_PASSWORD).toString()
+
+let demoUser = db.prepare('SELECT id FROM users WHERE email = ?').get(DEMO_EMAIL)
+if (!demoUser) {
+  const userId = randomUUID()
+  db.prepare('INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)').run(
+    userId,
+    DEMO_EMAIL,
+    passwordHash
+  )
+  demoUser = { id: userId }
+  console.log(`Created demo user: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`)
+} else {
+  console.log(`Demo user already exists: ${DEMO_EMAIL}`)
+}
+
+const userId = demoUser.id
+
+// Helper to insert a recipe
+function insertRecipe(recipeDef) {
+  const recipeId = randomUUID()
+
+  db.prepare(
+    'INSERT INTO recipes (id, user_id, name, yield_per_piece, ddt) VALUES (?, ?, ?, ?, ?)'
+  ).run(recipeId, userId, recipeDef.name, recipeDef.yield_per_piece, recipeDef.ddt)
+
+  // Build name -> id map, insert ingredients
+  const nameToId = {}
+  const pfNames = new Set()
+
+  for (let i = 0; i < recipeDef.ingredients.length; i++) {
+    const ing = recipeDef.ingredients[i]
+    const ingId = randomUUID()
+    nameToId[ing.name] = ingId
+    if (ing.category === 'PREFERMENT') pfNames.add(ing.name)
+
+    db.prepare(
+      'INSERT INTO recipe_ingredients (id, recipe_id, name, category, base_qty, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(ingId, recipeId, ing.name, ing.category, ing.K, i)
+  }
+
+  // Insert preferment settings and baker's pcts
+  if (recipeDef.preferments) {
+    for (const pf of recipeDef.preferments) {
+      const pfIngId = nameToId[pf.name]
+      if (!pfIngId) {
+        console.warn(`  Warning: PF "${pf.name}" not found in ingredients`)
+        continue
+      }
+
+      // Determine base_source_ingredient_id
+      let baseSourceId = null
+      if (pf.base_source) {
+        baseSourceId = nameToId[pf.base_source] || null
+      }
+
+      db.prepare(
+        'INSERT INTO preferment_settings (ingredient_id, enabled, type, base_source_ingredient_id) VALUES (?, ?, ?, ?)'
+      ).run(pfIngId, pf.enabled ? 1 : 0, pf.type, baseSourceId)
+
+      // Insert baker's pcts for each ingredient in this PF
+      for (const [ingName, bp] of Object.entries(pf.bakers_pcts)) {
+        const ingId = nameToId[ingName]
+        if (ingId && bp != null) {
+          db.prepare(
+            'INSERT OR REPLACE INTO preferment_bakers_pcts (ingredient_id, preferment_ingredient_id, bakers_pct) VALUES (?, ?, ?)'
+          ).run(ingId, pfIngId, bp)
+        }
+      }
+    }
+  }
+
+  console.log(`  Inserted recipe: ${recipeDef.name} (${recipeDef.ingredients.length} ingredients)`)
+  return recipeId
+}
+
+// ─── Seed Recipes ────────────────────────────────────────────────────────────
+
+console.log('\nSeeding recipes...\n')
+
+// Clear existing recipes for demo user
+const existing = db.prepare('SELECT COUNT(*) as count FROM recipes WHERE user_id = ?').get(userId)
+if (existing.count > 0) {
+  db.prepare('DELETE FROM recipes WHERE user_id = ?').run(userId)
+  console.log(`  Cleared ${existing.count} existing recipes\n`)
+}
+
+// 14.1 Panettone
+insertRecipe({
+  name: 'Panettone',
+  yield_per_piece: 80,
+  ddt: 24,
+  ingredients: [
+    { name: 'Bread flour', category: 'FLOUR', K: 234 },
+    { name: 'Butter', category: 'ENRICHMENT', K: 357 },
+    { name: 'Water', category: 'LIQUID', K: 322 },
+    { name: 'Salt', category: 'SEASONING', K: 14 },
+    { name: 'Honey', category: 'SWEETENER', K: 54 },
+    { name: 'Sugar', category: 'SWEETENER', K: 234 },
+    { name: 'Egg Yolks', category: 'ENRICHMENT', K: 70 },
+    { name: 'Candied lemon peel', category: 'MIXIN', K: 124 },
+    { name: 'Candied orange peel', category: 'MIXIN', K: 357 },
+    { name: 'Raisins', category: 'MIXIN', K: 357 },
+    { name: 'Vanilla Bean', category: 'FLAVORING', K: 2.5 },
+    { name: 'Orange Peel', category: 'FLAVORING', K: 1.5 },
+    { name: 'Yeast', category: 'LEAVENING', K: 0 },
+    { name: 'Malt', category: 'FLAVORING', K: 0 },
+    { name: 'Levain', category: 'PREFERMENT', K: 2413 },
+    { name: 'First Feed', category: 'PREFERMENT', K: 244 }
+  ],
+  preferments: [
+    {
+      name: 'Levain',
+      type: 'LEVAIN',
+      enabled: true,
+      bakers_pcts: {
+        'Bread flour': 1.0,
+        Butter: 0.24,
+        Water: 0.55,
+        Yeast: 0.003,
+        Malt: 0.02,
+        Sugar: 0.24,
+        'Egg Yolks': 0.16,
+        Levain: 0.25
+      }
+    },
+    {
+      name: 'First Feed',
+      type: 'FIRST_FEED',
+      enabled: true,
+      base_source: 'Levain',
+      bakers_pcts: {
+        'Bread flour': 1.0,
+        Water: 0.5,
+        Levain: 1.0
+      }
+    }
+  ]
+})
+
+// 14.2 French Baguette
+insertRecipe({
+  name: 'French Baguette',
+  yield_per_piece: 350,
+  ddt: 24,
+  ingredients: [
+    { name: 'Bread flour', category: 'FLOUR', K: 1000 },
+    { name: 'Water', category: 'LIQUID', K: 700 },
+    { name: 'Salt', category: 'SEASONING', K: 20 },
+    { name: 'Yeast', category: 'LEAVENING', K: 3 },
+    { name: 'Poolish', category: 'PREFERMENT', K: 400 }
+  ],
+  preferments: [
+    {
+      name: 'Poolish',
+      type: 'POOLISH',
+      enabled: true,
+      bakers_pcts: {
+        'Bread flour': 1.0,
+        Water: 1.0,
+        Yeast: 0.001
+      }
+    }
+  ]
+})
+
+// 14.3 Country Sourdough Batard
+insertRecipe({
+  name: 'Country Sourdough Batard',
+  yield_per_piece: 800,
+  ddt: 24,
+  ingredients: [
+    { name: 'Bread flour', category: 'FLOUR', K: 850 },
+    { name: 'WW Flour', category: 'FLOUR', K: 150 },
+    { name: 'Water', category: 'LIQUID', K: 750 },
+    { name: 'Salt', category: 'SEASONING', K: 20 },
+    { name: 'Liquid Levain', category: 'PREFERMENT', K: 200 }
+  ],
+  preferments: [
+    {
+      name: 'Liquid Levain',
+      type: 'LEVAIN',
+      enabled: true,
+      bakers_pcts: {
+        'Bread flour': 1.0,
+        Water: 1.0,
+        'Liquid Levain': 0.2
+      }
+    }
+  ]
+})
+
+// 14.4 Brioche
+insertRecipe({
+  name: 'Brioche',
+  yield_per_piece: 60,
+  ddt: 22,
+  ingredients: [
+    { name: 'Bread flour', category: 'FLOUR', K: 1000 },
+    { name: 'Eggs', category: 'ENRICHMENT', K: 500 },
+    { name: 'Butter', category: 'ENRICHMENT', K: 500 },
+    { name: 'Sugar', category: 'SWEETENER', K: 120 },
+    { name: 'Salt', category: 'SEASONING', K: 20 },
+    { name: 'Yeast', category: 'LEAVENING', K: 30 },
+    { name: 'Milk', category: 'LIQUID', K: 50 },
+    { name: 'Sponge', category: 'PREFERMENT', K: 400 }
+  ],
+  preferments: [
+    {
+      name: 'Sponge',
+      type: 'SPONGE',
+      enabled: true,
+      bakers_pcts: {
+        'Bread flour': 1.0,
+        Milk: 0.5,
+        Yeast: 0.03,
+        Sugar: 0.1
+      }
+    }
+  ]
+})
+
+console.log('\nDone! Seeded 4 recipes for demo@example.com / demo123\n')
+db.close()
