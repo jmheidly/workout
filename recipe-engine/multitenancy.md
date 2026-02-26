@@ -253,7 +253,11 @@ Constraint: `UNIQUE(bakery_id, email)` prevents duplicate invitations.
 
 Format: `/invite/{token}`
 
-The link is displayed after creation for copy-paste sharing. Email delivery is not built in.
+The link is shown in two places:
+- **On creation** — a green banner with the URL and a Copy button appears immediately after inviting
+- **In the pending invitations list** — each pending invitation displays its full link with a Copy button, so admins can retrieve it at any time
+
+Email delivery is not built in — the admin copies the link and shares it manually.
 
 ### 6.3 Acceptance Flow
 
@@ -305,28 +309,72 @@ After successful authentication (email or OAuth), the flow is:
 
 ## 8. Bakery Context Resolution
 
+Bakery context resolution is the mechanism that connects a logged-in user to their active bakery on every request. It runs in SvelteKit's `handle` hook (`hooks.server.js`) and populates `event.locals` with both user and bakery data that all downstream routes can use.
+
 ### 8.1 Middleware (`hooks.server.js`)
 
-After session validation, the hook resolves bakery context:
+The hook runs on **every request** before any route loads. It has two phases:
+
+**Phase 1 — Session validation:**
+1. Read `recipe_session` cookie from the request
+2. Hash the token with SHA256 to get the session ID
+3. Look up the session in the DB; reject if missing or expired
+4. Look up the user by `session.user_id`; reject if user deleted
+5. If the session is past the 15-day threshold, extend it to 30 days
+6. Set `event.locals.user = { id, email, name }` and `event.locals.session`
+
+**Phase 2 — Bakery context resolution:**
+1. Re-fetch the full user record to get `active_bakery_id`
+2. Call `getBakeryMember(active_bakery_id, user.id)` — verifies the user is still a member (they could have been removed since last request)
+3. Call `getBakery(active_bakery_id)` — fetches bakery name/slug
+4. Set `event.locals.bakery = { id, name, slug, role }` where `role` comes from the `bakery_members` row
+
+If **any step** in Phase 2 fails (no `active_bakery_id`, user removed from bakery, bakery deleted), `locals.bakery` remains `undefined`. The hook does **not** throw or redirect — it leaves that to the layout guards.
 
 ```
-1. Get user's active_bakery_id from DB
-2. Verify user is still a member of that bakery (getBakeryMember)
-3. Get bakery details (getBakery)
-4. Set event.locals.bakery = { id, name, slug, role }
+Request
+  │
+  ▼
+hooks.server.js handle()
+  ├─ No session cookie → locals.user = undefined, locals.bakery = undefined
+  ├─ Invalid/expired session → same
+  └─ Valid session
+       ├─ locals.user = { id, email, name }
+       └─ active_bakery_id?
+            ├─ No → locals.bakery = undefined
+            └─ Yes → still a member?
+                 ├─ No → locals.bakery = undefined
+                 └─ Yes → locals.bakery = { id, name, slug, role }
+  │
+  ▼
+Route layout load()
 ```
-
-If any step fails, `locals.bakery` remains unset.
 
 ### 8.2 Layout Guards
 
-| Layout Group | Auth Required | Bakery Required | Use Case |
-|-------------|--------------|----------------|----------|
-| `(auth)` | No | No | Login, signup |
-| `(setup)` | Yes | No | Bakery selection, creation |
-| `(app)` | Yes | Yes | All app functionality |
+The three layout groups form a cascading permission model. Each layout's `load()` function checks `locals` and redirects if requirements aren't met:
 
-The `(app)` layout redirects to `/login` if no user, and to `/bakeries` if no bakery context.
+| Layout Group | Auth Required | Bakery Required | Guard Logic | Use Case |
+|-------------|--------------|----------------|-------------|----------|
+| `(auth)` | No | No | No checks — public routes | Login, signup, OAuth callbacks |
+| `(setup)` | Yes | No | Redirects to `/login` if `!locals.user` | Bakery selection/creation, invite acceptance |
+| `(app)` | Yes | Yes | Redirects to `/login` if `!locals.user`, then to `/bakeries` if `!locals.bakery` | All app functionality (recipes, mixers, inventory, settings) |
+
+**Why two separate checks in `(app)`?** A user can be authenticated but have no bakery context if:
+- Their `active_bakery_id` is null (first login after being removed from all bakeries)
+- They were removed from their active bakery between requests
+- The bakery was deleted
+
+In all cases, the `(app)` layout sends them to `/bakeries` (a `(setup)` route) where they can select or create a bakery.
+
+### 8.3 How `locals` Flows to Routes
+
+SvelteKit's `locals` object is set once in the hook and is available to:
+- **Layout `load()` functions** — for guard checks and passing `user`/`bakery` to the client
+- **Page `load()` functions** — for data queries scoped by `locals.bakery.id`
+- **Form actions** — for mutation authorization via `requireRole(locals, ...)`
+
+The `(app)` layout returns `{ user: locals.user, bakery: locals.bakery }` from its `load()`, making both available to all child pages via SvelteKit's data inheritance (`data.user`, `data.bakery` in any `+page.svelte` under `(app)`).
 
 ---
 
