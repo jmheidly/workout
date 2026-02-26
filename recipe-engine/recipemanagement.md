@@ -395,7 +395,7 @@ ProcessStep {
 }
 
 enum ProcessStage {
-  PREFERMENT_BUILD, AUTOLYSE, MIXING, BULK_FERMENT,
+  PREFERMENT_BUILD, AUTOLYSE, FERMENTOLYSE, MIXING,
   FOLD, DIVIDE, PRESHAPE, REST, SHAPE, PROOF,
   RETARD, BAKE, COOL, FINISH
 }
@@ -1003,7 +1003,9 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 
 ## 7. Mixing & Friction System (Rounds-Based)
 
-**Mixer selection is a production-time decision**, not a recipe-level setting. The same recipe may be mixed on different mixers depending on batch size, equipment availability, or baker preference. The baker selects a mixer and mix type on the **Production page** when preparing to mix — the engine then computes friction, water temperature adjustment, and mixing durations for that session. Mixer profiles and mix types are NOT stored on the recipe.
+**Mix type is a recipe-level design decision** — it defines the target gluten development and determines the friction multiplier. The recipe author selects a mix type (Short Mix, Improved Mix, Intensive Mix, Short Improved) when creating or editing the formula; it is stored in the `recipes.mix_type` column (default: Improved Mix).
+
+**Mixer selection is a production-time decision.** The same recipe may be mixed on different mixers depending on batch size, equipment availability, or baker preference. The baker selects a mixer on the **Production page** when preparing to mix — the engine then combines the recipe's mix type with the selected mixer's calibration data to compute friction, water temperature adjustment, and mixing durations for that session.
 
 ### 7.1 Friction Factor Defaults by Mixer Type
 
@@ -1243,11 +1245,13 @@ The matrix evaluates in order (first match wins):
 | 6 | Inoculation 15–25% AND total hydration < 75% | INCORPORATION | Low hydration gray zone — exclude levain |
 | 7 | Fallback | AUTOLYSE | Shouldn't reach here |
 
-Metrics used by the matrix:
-- **inoculationPct** = PF flour / total formula flour
+Metrics used by the matrix (all ratio denominators are TFQ-based — K + PF contributions — not K alone):
+- **inoculationPct** = PF flour / total formula flour (TFQ: sum of flour K values + flour inside all enabled PFs)
 - **hydration** = PF water / PF flour (null if flour = 0)
-- **waterRatio** = PF water / total formula water
-- **wholeWheatPct** = whole wheat flour / total flour (name heuristic: `/\bwhole\s*wheat\b|\bWW\b|\bwheatmeal\b/i`)
+- **waterRatio** = PF water / total formula water (TFQ: sum of liquid K values + water inside all enabled PFs)
+- **totalHydration** = total formula water / total formula flour (used by rules 5/6 for gray-zone decisions)
+- **wholeWheatPct** = whole wheat TFQ / total formula flour (name heuristic: `/\bwhole\s*wheat\b|\bWW\b|\bwheatmeal\b/i`)
+- **ryePct** = rye TFQ / total formula flour (name heuristic: `/\brye\b/i`; used for rye autolyse warning)
 
 When a levain stays in AUTOLYSE (rules 3, 5), the mixing steps use the FERMENTOLYSE stage instead of AUTOLYSE (see §8.5).
 
@@ -1366,7 +1370,66 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 
 **Current implementation:** The engine auto-generates multi-phase mixing steps via `suggestMixingSteps()` in `process-steps.js`. It classifies all ingredients into four phases — AUTOLYSE, INCORPORATION, FAT_ADDITION, MIXIN — using `classifyAllIngredients()` in `mixing-phases.js`. For liquid preferments, a post-pass refines classification: Poolish uses a water-ratio threshold, Levain uses the sourdough decision matrix (§8.4). When autolyse is enabled and a preferment ends up in the autolyse group, the engine uses the FERMENTOLYSE stage (§8.5). The baker can further customize via the Process Steps editor or drag overrides.
 
-**Available process stages:** `PREFERMENT_BUILD`, `AUTOLYSE`, `FERMENTOLYSE`, `MIXING`, `BULK_FERMENT`, `FOLD`, `DIVIDE`, `PRESHAPE`, `REST`, `SHAPE`, `PROOF`, `RETARD`, `BAKE`, `COOL`, `FINISH`.
+**Available process stages:** `PREFERMENT_BUILD`, `AUTOLYSE`, `FERMENTOLYSE`, `MIXING`, `FOLD`, `DIVIDE`, `PRESHAPE`, `REST`, `SHAPE`, `PROOF`, `RETARD`, `BAKE`, `COOL`, `FINISH`.
+
+### 10.3 Full Process Suggestion Algorithm
+
+`suggestProcessSteps()` in `process-steps.js` generates a complete process — from first mix through final proof — with `duration_min`, `temperature`, and `mixer_speed` populated where derivable.
+
+**Inputs:**
+- `ingredients` — recipe ingredient list (used for phase classification)
+- `hasAutolyse` — whether autolyse is enabled
+- `autolyseDurationMin` — autolyse rest duration (default 20)
+- `mixType` — one of `Short Mix`, `Improved Mix`, `Intensive Mix`, `Short Improved`
+- `ddt` — desired dough temperature in °C
+- `autolyseOverrides` — baker's drag overrides from the autolyse split UI (`{ [ingredientId]: 'autolyse' | 'final' }`)
+
+**Step 1: Classify ingredients** — existing `classifyAllIngredients` + `groupByPhase` into AUTOLYSE, INCORPORATION, FAT_ADDITION, MIXIN phases. Then apply `autolyseOverrides`: ingredients the baker dragged into the autolyse list are moved to AUTOLYSE; ingredients dragged to final mix are moved to INCORPORATION (unless already in FAT_ADDITION or MIXIN). This ensures process step descriptions match the autolyse split the baker sees in the UI.
+
+**Preferment type inference:** When a PREFERMENT ingredient is loaded without `preferment_settings` or with the default `CUSTOM` type, the engine infers the type from the ingredient name (e.g., "Levain" → `LEVAIN`, "Poolish" → `POOLISH`, "Biga" → `BIGA`). The baker can override back to `CUSTOM` via the Type dropdown. This inference runs at ingredient load time and on name change, ensuring the classification engine sees the correct PF type for the sourdough decision matrix and water-ratio threshold.
+
+**Step 2: Derive process parameters from mix type.** `MIX_TYPE_PROCESS` lookup table (sourced from Suas Ch. 3):
+
+| Parameter | Short Mix | Improved Mix | Intensive Mix | Short Improved |
+|-----------|-----------|-------------|--------------|----------------|
+| Bulk ferment (min) | 210 | 90 | 20 | 60 |
+| Folds during bulk | 3 | 1 | 0 | 1 |
+| Fold interval (min) | 45 | 45 | — | 30 |
+| Bench rest (min) | 20 | 20 | 15 | 20 |
+| Final proof (min) | 50 | 75 | 105 | 60 |
+
+**Step 3: Enrichment detection.** If FAT_ADDITION phase has ingredients → enriched dough. Affects proof temperature (27°C enriched, 25°C lean) and fermentation descriptions.
+
+**Step 4: Mixer speed derivation** from `MIX_TYPES[mixType].has_second`:
+
+| Step | has_second=true | has_second=false |
+|------|----------------|-----------------|
+| Autolyse/Fermentolyse Mix | 1st | 1st |
+| Incorporation | 1st → 2nd | 1st |
+| Development | 2nd | _(skipped)_ |
+| Fat & Sugar Addition | 1st → 2nd | 1st |
+| Mix-ins | 1st | 1st |
+
+**Step 5: Temperature assignment:**
+- Bulk fermentation / folds → DDT
+- Final proof → 25°C (lean) or 27°C (enriched)
+- Mixing steps → null (mixer friction is a production variable)
+- Bench rest → null (room temperature)
+
+**Step 6: Generate steps in order:**
+1. Mixing phase steps (autolyse/fermentolyse → incorporation → development → fat addition → mix-ins)
+2. FOLD — bulk fermentation is represented as a sequence of fold steps. Each step is a timed fermentation segment; steps with fold actions include "Stretch and fold at end of phase" in the description. Total steps = folds + 1 (N fold-action phases + 1 final rest phase).
+   - If folds = 0, a single FOLD step with the full bulk duration
+   - Example (Short Improved, 60 min, 1 fold @ 30 min): Fold 1 (30 min, stretch+fold) → Fold 2 (30 min, rest)
+   - Example (Short Mix, 210 min, 3 folds @ 45 min): Fold 1 (45 min, s+f) → Fold 2 (45 min, s+f) → Fold 3 (45 min, s+f) → Fold 4 (30 min, rest)
+3. PRESHAPE
+4. REST (bench rest) — duration from table
+5. SHAPE
+6. RETARD — 720 min (12 h) at 3°C. Develops flavor, strengthens crust color.
+7. PROOF — duration from table, temp = proof temp
+8. BAKE — lean: 240°C with steam; enriched: 175°C without steam. Duration left null (varies by piece weight, oven, product type).
+
+Each step is independently trackable and editable. The baker can delete, reorder, or adjust any step. Steps like RETARD can be removed if the process doesn't use cold retardation.
 
 ---
 

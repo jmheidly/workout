@@ -2,8 +2,9 @@
   import { enhance } from '$app/forms'
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
-  import { PROCESS_STAGES, suggestMixingSteps } from '$lib/process-steps.js'
+  import { PROCESS_STAGES, suggestProcessSteps } from '$lib/process-steps.js'
   import { MIXING_PHASES, classifyAllIngredients } from '$lib/mixing-phases.js'
+  import { MIX_TYPE_NAMES } from '$lib/mixing.js'
   import { FERMENTATION_DEFAULTS, PF_SEED_BAKERS_PCT, formatDuration } from '$lib/preferment-defaults.js'
   import { COMMON_INGREDIENTS } from '$lib/common-ingredients.js'
   import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
@@ -86,7 +87,9 @@
     data.recipe.ingredients.map((ing) => ({
       ...ing,
       preferment_bakers_pcts: { ...ing.preferment_bakers_pcts },
-      preferment_settings: ing.preferment_settings ? { ...ing.preferment_settings } : null
+      preferment_settings: ing.category === 'PREFERMENT'
+        ? { ingredient_id: ing.id, enabled: 1, type: guessPfType(ing.name), ddt: null, fermentation_duration_min: null, ...ing.preferment_settings }
+        : null
     }))
   )
   let calculated = $state(data.calculated)
@@ -104,6 +107,9 @@
   let autolyse = $state(!!data.recipe.autolyse)
   let autolyseDurationMin = $state(data.recipe.autolyse_duration_min || 20)
   let autolyseOverrides = $state(data.recipe.autolyse_overrides || {})
+
+  // Mix Type (§7)
+  let mixType = $state(data.recipe.mix_type || 'Improved Mix')
 
   // Autolyse warnings — reactive, recomputed when ingredients change
   let autolyseWarnings = $derived.by(() => {
@@ -167,6 +173,16 @@
       const idx = ingredients.indexOf(ing)
       if (idx >= 0) onCategoryChange(idx, match.category)
     }
+    // Re-infer PF type when name changes on an existing preferment
+    inferPfType(ing)
+  }
+
+  function inferPfType(ing) {
+    if (ing.category !== 'PREFERMENT' || !ing.preferment_settings) return
+    const inferred = guessPfType(ing.name)
+    if (inferred !== ing.preferment_settings.type) {
+      onPfTypeChange(ing.id, inferred)
+    }
   }
 
   function acSelect(ing, entry) {
@@ -177,6 +193,7 @@
       const idx = ingredients.indexOf(ing)
       if (idx >= 0) onCategoryChange(idx, entry.category)
     } else {
+      inferPfType(ing)
       onFieldChange()
     }
   }
@@ -295,6 +312,7 @@
       autolyse: autolyse ? 1 : 0,
       autolyse_duration_min: autolyseDurationMin,
       autolyse_overrides: autolyseOverrides,
+      mix_type: mixType,
       ingredients: ingredients.map((ing, idx) => ({
         id: ing.id,
         name: ing.name,
@@ -333,10 +351,13 @@
     autolyse = !!s.autolyse
     autolyseDurationMin = s.autolyse_duration_min || 20
     autolyseOverrides = s.autolyse_overrides || {}
+    mixType = s.mix_type || 'Improved Mix'
     ingredients = (s.ingredients || []).map((ing) => ({
       ...ing,
       preferment_bakers_pcts: { ...(ing.preferment_bakers_pcts || {}) },
-      preferment_settings: ing.preferment_settings ? { ...ing.preferment_settings } : null,
+      preferment_settings: ing.category === 'PREFERMENT'
+        ? { ingredient_id: ing.id, enabled: 1, type: guessPfType(ing.name), ddt: null, fermentation_duration_min: null, ...ing.preferment_settings }
+        : null,
     }))
     processSteps = (s.process_steps || []).map((step) => ({ ...step }))
     changeNotes = ''
@@ -647,19 +668,20 @@
   }
 
   function suggestSteps() {
-    const steps = suggestMixingSteps({
+    const steps = suggestProcessSteps({
       ingredients,
       hasAutolyse: autolyse,
       autolyseDurationMin,
+      mixType,
+      ddt,
+      autolyseOverrides,
     })
     for (const s of steps) {
       processSteps.push({
         id: generateId(),
         sort_order: processSteps.length,
-        ...s,
-        temperature: null,
-        mixer_speed: null,
         notes: null,
+        ...s,
       })
     }
   }
@@ -1092,6 +1114,20 @@
               />
             </div>
           {/if}
+          <Separator orientation="vertical" class="!h-8 mx-1" />
+          <div class="w-40">
+            <label for="mix-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">Mix Type</label>
+            <select
+              id="mix-type"
+              bind:value={mixType}
+              onchange={scheduleCalc}
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            >
+              {#each MIX_TYPE_NAMES as name}
+                <option value={name}>{name}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
       {/if}
