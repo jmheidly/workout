@@ -89,7 +89,7 @@
     <h1 class="text-lg font-semibold">Ingredient Library</h1>
     <Badge variant="secondary">{data.ingredients.length}</Badge>
     <div class="flex-1"></div>
-    {#if editing !== 'new'}
+    {#if data.canEdit && editing !== 'new'}
       <Button variant="outline" size="sm" onclick={startCreate}>
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         Add Ingredient
@@ -113,7 +113,7 @@
   {/if}
 
   <!-- ── Inline Create / Edit Form ───────────────────────── -->
-  {#if editing}
+  {#if data.canEdit && editing}
     <Card class="border-primary/30">
       <CardHeader class="pb-4">
         <CardTitle>{editing === 'new' ? 'New Ingredient' : `Edit: ${formName}`}</CardTitle>
@@ -193,10 +193,14 @@
       <CardContent class="py-12 text-center text-muted-foreground">
         <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3 opacity-40"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
         <p class="font-medium">No ingredients yet</p>
-        <p class="mt-1 text-sm">Ingredients are auto-captured when you save a recipe, or you can add them manually.</p>
-        <div class="mt-4">
-          <Button variant="outline" size="sm" onclick={startCreate}>Add Ingredient</Button>
-        </div>
+        {#if data.canEdit}
+          <p class="mt-1 text-sm">Ingredients are auto-captured when you save a recipe, or you can add them manually.</p>
+          <div class="mt-4">
+            <Button variant="outline" size="sm" onclick={startCreate}>Add Ingredient</Button>
+          </div>
+        {:else}
+          <p class="mt-1 text-sm">This bakery doesn't have any ingredients yet.</p>
+        {/if}
       </CardContent>
     </Card>
   {/if}
@@ -226,30 +230,32 @@
             {#if !isEditing}
               <div class="flex items-center justify-between gap-2 py-2">
                 <span class="text-sm">{ingredient.name}</span>
-                <div class="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onclick={() => startEdit(ingredient)}>Edit</Button>
-                  {#if confirmDelete === ingredient.id}
-                    <form
-                      method="POST"
-                      action="?/delete"
-                      use:enhance={() => {
-                        return async ({ result, update }) => {
-                          if (result.type === 'success') {
-                            toast.success('Ingredient deleted')
-                            confirmDelete = null
+                {#if data.canEdit}
+                  <div class="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" onclick={() => startEdit(ingredient)}>Edit</Button>
+                    {#if confirmDelete === ingredient.id}
+                      <form
+                        method="POST"
+                        action="?/delete"
+                        use:enhance={() => {
+                          return async ({ result, update }) => {
+                            if (result.type === 'success') {
+                              toast.success('Ingredient deleted')
+                              confirmDelete = null
+                            }
+                            await update({ reset: false })
                           }
-                          await update({ reset: false })
-                        }
-                      }}
-                    >
-                      <input type="hidden" name="id" value={ingredient.id} />
-                      <Button type="submit" variant="destructive" size="sm">Confirm</Button>
-                    </form>
-                    <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Cancel</Button>
-                  {:else}
-                    <Button variant="ghost" size="sm" class="text-destructive" onclick={() => (confirmDelete = ingredient.id)}>Delete</Button>
-                  {/if}
-                </div>
+                        }}
+                      >
+                        <input type="hidden" name="id" value={ingredient.id} />
+                        <Button type="submit" variant="destructive" size="sm">Confirm</Button>
+                      </form>
+                      <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Cancel</Button>
+                    {:else}
+                      <Button variant="ghost" size="sm" class="text-destructive" onclick={() => (confirmDelete = ingredient.id)}>Delete</Button>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/if}
           {/each}

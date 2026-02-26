@@ -215,6 +215,26 @@ Role checks use `requireRole(locals, ...allowedRoles)` from `auth.js`. This thro
 - `redirect(303, '/bakeries')` if no bakery context
 - `error(403, 'Insufficient permissions')` if role is insufficient
 
+### 5.5 Domain Route Role Enforcement
+
+All domain route mutation actions enforce `requireRole(locals, 'owner', 'admin', 'member')`:
+
+| Route | Gated Actions |
+|-------|--------------|
+| `recipes/+page.server.js` | `delete` |
+| `recipes/new/+page.server.js` | `default` action + `load` (viewers can't access create form) |
+| `recipes/[id]/+page.server.js` | `save`, `createMixer` |
+| `mixers/+page.server.js` | `create`, `update`, `delete` |
+| `inventory/+page.server.js` | `create`, `update`, `delete` |
+
+**Read-only routes (no gating needed):**
+- `recipes/[id]/production/+page.server.js` — load only, no mutations
+- `recipes/[id]/versions/+page.server.js` — load only, no mutations. If a "restore from version" action is added later, gate it as a mutation.
+
+**Client-side UX:** Each load function returns `canEdit: locals.bakery.role !== 'viewer'`. Svelte components use this to hide mutation controls (New, Edit, Delete, Save buttons) for viewers. The recipe editor allows viewers to interact with inputs and see calculations update (stateless exploration), but hides the Save button and shows a "view-only access" banner.
+
+**Intentionally unauthenticated:** `/api/recipes/[id]/calculate` — pure stateless computation with no DB access.
+
 ---
 
 ## 6. Invitation System
@@ -383,9 +403,10 @@ The seed script (`scripts/seed.mjs`) creates:
 
 | Entity | Details |
 |--------|---------|
-| Demo user | `demo@example.com` / `demo123`, name "Demo Baker" |
+| Demo user (owner) | `demo@example.com` / `demo123`, name "Demo Baker" |
+| Viewer user | `viewer@example.com` / `viewer123`, name "Demo Viewer" |
 | Demo bakery | name "Demo Bakery", slug "demo", created_by demo user |
-| Bakery member | demo user as owner of Demo Bakery |
+| Bakery members | demo user as owner, viewer user as viewer |
 | Mixer profiles | 3 profiles (Caplain, Haussler, Bhk) scoped to Demo Bakery |
 | Recipes | 4 recipes (Panettone, French Baguette, Country Sourdough Batard, Brioche) scoped to Demo Bakery |
 

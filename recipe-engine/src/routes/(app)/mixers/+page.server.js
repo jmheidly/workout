@@ -5,15 +5,17 @@ import {
   updateMixerProfile,
   deleteMixerProfile,
 } from '$lib/server/db.js'
+import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { mixerProfiles: getMixerProfiles(locals.bakery.id) }
+  return { mixerProfiles: getMixerProfiles(locals.bakery.id), canEdit: locals.bakery.role !== 'viewer' }
 }
 
 /** @type {import('./$types').Actions} */
 export const actions = {
   create: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
     const dataStr = form.get('data')?.toString()
     if (!dataStr) return fail(400, { error: 'Missing data' })
@@ -32,6 +34,7 @@ export const actions = {
   },
 
   update: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
     const id = form.get('id')?.toString()
     const dataStr = form.get('data')?.toString()
@@ -49,6 +52,7 @@ export const actions = {
   },
 
   delete: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing id' })

@@ -1,6 +1,25 @@
 import { error } from '@sveltejs/kit'
 import { getRecipe, getRecipeVersions, getRecipeVersion, buildRecipeSnapshot, getMixerProfiles } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
+import { diffVersions, summarizeChanges } from '$lib/version-diff.js'
+
+/**
+ * Generate a human-readable summary, resolving mixer UUIDs to names.
+ */
+function resolveChangeSummary(changes, mixerNameMap) {
+  // Replace mixer UUIDs in the changes before summarizing
+  const resolved = changes.map((c) => {
+    if (c.type === 'param_changed' && c.field === 'mixer_profile_id') {
+      return {
+        ...c,
+        old: c.old ? mixerNameMap[c.old] || c.old : null,
+        new: c.new ? mixerNameMap[c.new] || c.new : null,
+      }
+    }
+    return c
+  })
+  return summarizeChanges(resolved)
+}
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals, url }) {
@@ -103,6 +122,31 @@ export function load({ params, locals, url }) {
   }
 
   const mixerProfiles = getMixerProfiles(locals.bakery.id)
+  const mixerNameMap = Object.fromEntries(mixerProfiles.map((m) => [m.id, m.name]))
 
-  return { recipe, versions, viewData, compareData, mixerProfiles }
+  // Build per-version change summaries by diffing adjacent snapshots
+  // versions is sorted DESC — [0] is newest historical, last is oldest
+  const changeSummaries = {}
+  if (versions.length > 0) {
+    // Diff: current (recipes table) vs newest snapshot
+    const currentSnapshot = buildRecipeSnapshot(recipe)
+    const newestVer = getRecipeVersion(params.id, versions[0].version_number)
+    if (newestVer) {
+      const newestSnapshot = JSON.parse(newestVer.snapshot)
+      const changes = diffVersions(newestSnapshot, currentSnapshot)
+      changeSummaries[recipe.version] = resolveChangeSummary(changes, mixerNameMap)
+    }
+
+    // Diff each historical version against its predecessor
+    for (let i = 0; i < versions.length - 1; i++) {
+      const newer = getRecipeVersion(params.id, versions[i].version_number)
+      const older = getRecipeVersion(params.id, versions[i + 1].version_number)
+      if (newer && older) {
+        const changes = diffVersions(JSON.parse(older.snapshot), JSON.parse(newer.snapshot))
+        changeSummaries[versions[i].version_number] = resolveChangeSummary(changes, mixerNameMap)
+      }
+    }
+  }
+
+  return { recipe, versions, viewData, compareData, mixerProfiles, changeSummaries }
 }

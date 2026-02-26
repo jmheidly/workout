@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit'
 import { getRecipesByBakery, deleteRecipe, getRecipe } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
+import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -36,12 +37,13 @@ export function load({ locals }) {
     }
   })
 
-  return { recipes: enriched }
+  return { recipes: enriched, canEdit: locals.bakery.role !== 'viewer' }
 }
 
 /** @type {import('./$types').Actions} */
 export const actions = {
   delete: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing recipe ID' })

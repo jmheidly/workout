@@ -195,6 +195,41 @@ if (!existingBakery) {
 
 const bakeryId = existingBakery?.id || demoBakeryId
 
+// ─── Create Viewer User ─────────────────────────────────────────────────────
+
+const VIEWER_EMAIL = 'viewer@example.com'
+const VIEWER_PASSWORD = 'viewer123'
+const viewerHash = CryptoJS.SHA256(VIEWER_PASSWORD).toString()
+
+let viewerUser = db
+  .prepare('SELECT id FROM users WHERE email = ?')
+  .get(VIEWER_EMAIL)
+if (!viewerUser) {
+  const viewerId = randomUUID()
+  db.prepare(
+    'INSERT INTO users (id, email, password_hash, name, active_bakery_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(viewerId, VIEWER_EMAIL, viewerHash, 'Demo Viewer', bakeryId)
+  viewerUser = { id: viewerId }
+  console.log(`Created viewer user: ${VIEWER_EMAIL} / ${VIEWER_PASSWORD}`)
+} else {
+  console.log(`Viewer user already exists: ${VIEWER_EMAIL}`)
+}
+
+// Add viewer to Demo Bakery if not already a member
+const viewerMembership = db
+  .prepare(
+    'SELECT id FROM bakery_members WHERE bakery_id = ? AND user_id = ?'
+  )
+  .get(bakeryId, viewerUser.id)
+if (!viewerMembership) {
+  db.prepare(
+    'INSERT INTO bakery_members (id, bakery_id, user_id, role) VALUES (?, ?, ?, ?)'
+  ).run(randomUUID(), bakeryId, viewerUser.id, 'viewer')
+  console.log('Added viewer user to Demo Bakery as viewer')
+} else {
+  console.log('Viewer user already a member of Demo Bakery')
+}
+
 // ─── Seed Mixer Profiles (§7.6) ─────────────────────────────────────────────
 
 console.log('\nSeeding mixer profiles...\n')
@@ -492,6 +527,8 @@ insertRecipe({
 })
 
 console.log(
-  '\nDone! Seeded 4 recipes + 3 mixer profiles for demo@example.com / demo123\n'
+  '\nDone! Seeded 4 recipes + 3 mixer profiles'
 )
+console.log('  Owner: demo@example.com / demo123')
+console.log('  Viewer: viewer@example.com / viewer123\n')
 db.close()

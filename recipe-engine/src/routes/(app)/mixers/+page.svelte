@@ -97,7 +97,7 @@
   <div class="flex items-center gap-3">
     <h1 class="text-lg font-semibold">Mixer Profiles</h1>
     <div class="flex-1"></div>
-    {#if editing !== 'new'}
+    {#if data.canEdit && editing !== 'new'}
       <Button variant="outline" size="sm" onclick={startCreate}>
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         New Mixer
@@ -110,7 +110,7 @@
 
   <!-- ── Create / Edit Form ──────────────────────────── -->
 
-  {#if editing}
+  {#if data.canEdit && editing}
     <Card class="border-primary/30">
       <CardHeader class="pb-4">
         <CardTitle>{editing === 'new' ? 'New Mixer Profile' : `Edit: ${formData.name}`}</CardTitle>
@@ -263,30 +263,32 @@
               <CardTitle class="text-base">{profile.name}</CardTitle>
               <Badge variant="secondary" class="font-normal">{profile.type}</Badge>
             </div>
-            <div class="flex items-center gap-1">
-              <Button variant="ghost" size="sm" onclick={() => startEdit(profile)}>Edit</Button>
-              {#if confirmDelete === profile.id}
-                <form
-                  method="POST"
-                  action="?/delete"
-                  use:enhance={() => {
-                    return async ({ result, update }) => {
-                      if (result.type === 'success') {
-                        toast.success('Mixer deleted')
-                        confirmDelete = null
+            {#if data.canEdit}
+              <div class="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onclick={() => startEdit(profile)}>Edit</Button>
+                {#if confirmDelete === profile.id}
+                  <form
+                    method="POST"
+                    action="?/delete"
+                    use:enhance={() => {
+                      return async ({ result, update }) => {
+                        if (result.type === 'success') {
+                          toast.success('Mixer deleted')
+                          confirmDelete = null
+                        }
+                        await update({ reset: false })
                       }
-                      await update({ reset: false })
-                    }
-                  }}
-                >
-                  <input type="hidden" name="id" value={profile.id} />
-                  <Button type="submit" variant="destructive" size="sm">Confirm</Button>
-                </form>
-                <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Cancel</Button>
-              {:else}
-                <Button variant="ghost" size="sm" class="text-destructive" onclick={() => (confirmDelete = profile.id)}>Delete</Button>
-              {/if}
-            </div>
+                    }}
+                  >
+                    <input type="hidden" name="id" value={profile.id} />
+                    <Button type="submit" variant="destructive" size="sm">Confirm</Button>
+                  </form>
+                  <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Cancel</Button>
+                {:else}
+                  <Button variant="ghost" size="sm" class="text-destructive" onclick={() => (confirmDelete = profile.id)}>Delete</Button>
+                {/if}
+              </div>
+            {/if}
           </div>
         </CardHeader>
         <CardContent>

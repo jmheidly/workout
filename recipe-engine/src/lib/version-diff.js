@@ -201,6 +201,10 @@ export function summarizeChanges(changes) {
       parts.push(`Bake loss ${fmtPct(c.old)} → ${fmtPct(c.new)}`)
     } else if (c.field === 'mix_type') {
       parts.push(`Mix type → ${c.new}`)
+    } else if (c.field === 'mixer_profile_id') {
+      if (!c.old) parts.push(`Mixer → ${c.new}`)
+      else if (!c.new) parts.push(`Removed mixer (was ${c.old})`)
+      else parts.push(`Mixer ${c.old} → ${c.new}`)
     } else if (c.field === 'autolyse') {
       parts.push(c.new ? 'Enabled autolyse' : 'Disabled autolyse')
     }

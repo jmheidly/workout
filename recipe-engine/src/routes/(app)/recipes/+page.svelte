@@ -50,10 +50,12 @@
           : `${data.recipes.length} recipe${data.recipes.length === 1 ? '' : 's'} in your collection.`}
       </p>
     </div>
-    <Button href="/recipes/new">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-      New Recipe
-    </Button>
+    {#if data.canEdit}
+      <Button href="/recipes/new">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New Recipe
+      </Button>
+    {/if}
   </div>
 
   {#if data.recipes.length > 3}
@@ -94,10 +96,16 @@
       </div>
       <h3 class="mb-1 text-lg font-semibold">No recipes yet</h3>
       <p class="mb-6 max-w-sm text-center text-sm text-muted-foreground">
-        Start building your recipe collection. Add ingredients, configure
-        pre-ferments, and calculate production quantities.
+        {#if data.canEdit}
+          Start building your recipe collection. Add ingredients, configure
+          pre-ferments, and calculate production quantities.
+        {:else}
+          This bakery doesn't have any recipes yet.
+        {/if}
       </p>
-      <Button href="/recipes/new">Create your first recipe</Button>
+      {#if data.canEdit}
+        <Button href="/recipes/new">Create your first recipe</Button>
+      {/if}
     </CardContent>
   </Card>
 
@@ -119,7 +127,7 @@
         class="group relative transition-all hover:shadow-md hover:border-foreground/20"
       >
         <!-- Delete overlay -->
-        {#if confirmDeleteId === recipe.id}
+        {#if data.canEdit && confirmDeleteId === recipe.id}
           <div
             class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-background/95 backdrop-blur-sm"
           >
@@ -170,20 +178,22 @@
           <CardHeader class="pb-3">
             <div class="flex items-start justify-between">
               <CardTitle class="line-clamp-1">{recipe.name}</CardTitle>
-              <button
-                type="button"
-                onclick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  confirmDeleteId = recipe.id
-                }}
-                class="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-                aria-label="Delete recipe"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
-                </svg>
-              </button>
+              {#if data.canEdit}
+                <button
+                  type="button"
+                  onclick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    confirmDeleteId = recipe.id
+                  }}
+                  class="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                  aria-label="Delete recipe"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                  </svg>
+                </button>
+              {/if}
             </div>
 
             <!-- Badges -->
