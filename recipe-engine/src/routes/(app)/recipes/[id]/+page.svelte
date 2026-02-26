@@ -4,7 +4,7 @@
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
   import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
-  import { MIX_TYPE_NAMES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { MIX_TYPE_NAMES, MIXER_TYPES, MIXER_TYPE_DEFAULTS, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
   import { COMMON_INGREDIENTS } from '$lib/common-ingredients.js'
   import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -23,6 +23,13 @@
     SelectContent,
     SelectItem,
   } from '$lib/components/ui/select/index.js'
+  import {
+    DialogRoot,
+    DialogContent,
+    DialogTitle,
+    DialogDescription,
+  } from '$lib/components/ui/dialog/index.js'
+  import MixerPicker from '$lib/components/mixer-picker.svelte'
 
   // ── Constants ──────────────────────────────────────────────
 
@@ -90,6 +97,7 @@
   )
   let calculated = $state(data.calculated)
   let saving = $state(false)
+  let changeNotes = $state('')
   let calculating = $state(false)
   let pfGrams = $state(initPfGrams())
   let pfAddSelect = $state({})
@@ -105,6 +113,40 @@
   // Mixer & Mix Type (§7)
   let mixerProfileId = $state(data.recipe.mixer_profile_id || '')
   let mixType = $state(data.recipe.mix_type || 'Improved Mix')
+
+  // Create Mixer dialog
+  const CAL_MIX_TYPES = ['Improved Mix', 'Intensive Mix', 'Short Improved']
+  let showCreateMixer = $state(false)
+  let newMixerData = $state(makeBlankMixer())
+
+  function makeBlankMixer() {
+    const defaults = MIXER_TYPE_DEFAULTS['SPIRAL']
+    return {
+      name: '',
+      type: 'SPIRAL',
+      friction_factor: defaults.friction,
+      first_speed_rpm: defaults.first_speed_rpm,
+      second_speed_rpm: defaults.second_speed_rpm,
+      calibrations: CAL_MIX_TYPES.map((mt) => ({
+        mix_type: mt,
+        first_speed_rounds: defaults.cal[mt] || 0,
+      })),
+    }
+  }
+
+  function onNewMixerTypeChange(newType) {
+    newMixerData.type = newType
+    const defaults = MIXER_TYPE_DEFAULTS[newType]
+    if (defaults) {
+      newMixerData.friction_factor = defaults.friction
+      newMixerData.first_speed_rpm = defaults.first_speed_rpm
+      newMixerData.second_speed_rpm = defaults.second_speed_rpm
+      newMixerData.calibrations = CAL_MIX_TYPES.map((mt) => ({
+        mix_type: mt,
+        first_speed_rounds: defaults.cal[mt] || 0,
+      }))
+    }
+  }
 
   // Ingredient Library (autocomplete)
   let ingredientLibrary = $state(data.ingredientLibrary || [])
@@ -148,6 +190,16 @@
     acOpenFor = null
     acQuery = ''
     acActiveIdx = -1
+  }
+
+  function inferCategory(ing) {
+    if (!ing.name?.trim()) return
+    const name = ing.name.trim().toLowerCase()
+    // Check ingredient library first, then common ingredients
+    const match =
+      ingredientLibrary.find((e) => e.name.toLowerCase() === name) ||
+      COMMON_INGREDIENTS.find((e) => e.name.toLowerCase() === name)
+    if (match) ing.category = match.category
   }
 
   function acSelect(ing, entry) {
@@ -757,6 +809,12 @@
 
 <!-- ── Sticky Action Bar ────────────────────────────────── -->
 
+{#if !data.canEdit}
+  <div class="-mx-4 border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800">
+    You have view-only access to this bakery.
+  </div>
+{/if}
+
 <div class="sticky top-0 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm">
   <div class="flex items-center gap-3">
     <a
@@ -783,7 +841,7 @@
       </span>
     {/if}
 
-    <Button variant="outline" size="sm" onclick={exportCsv} disabled={!calculated}>
+    <Button variant="outline" size="sm" onclick={exportCsv} disabled={!recipeReady || hasChanges}>
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       CSV
     </Button>
@@ -793,42 +851,54 @@
       Production
     </Button>
 
-    <form
-      method="POST"
-      action="?/save"
-      use:enhance={() => {
-        saving = true
-        return async ({ result, update }) => {
-          saving = false
-          if (result.type === 'success') {
-            toast.success('Recipe saved')
-            if (result.data?.calculated) calculated = result.data.calculated
-            if (result.data?.recipe) data.recipe.version = result.data.recipe.version
-            if (result.data?.versionCount !== undefined) data.versionCount = result.data.versionCount
-            if (result.data?.ingredientLibrary) ingredientLibrary = result.data.ingredientLibrary
-            savedSnapshot = JSON.stringify(buildRecipeData())
-          } else {
-            toast.error('Failed to save recipe')
+    {#if data.canEdit}
+      <form
+        method="POST"
+        action="?/save"
+        use:enhance={() => {
+          saving = true
+          return async ({ result, update }) => {
+            saving = false
+            if (result.type === 'success') {
+              toast.success('Recipe saved')
+              if (result.data?.calculated) calculated = result.data.calculated
+              if (result.data?.recipe) data.recipe.version = result.data.recipe.version
+              if (result.data?.versionCount !== undefined) data.versionCount = result.data.versionCount
+              if (result.data?.ingredientLibrary) ingredientLibrary = result.data.ingredientLibrary
+              changeNotes = ''
+              savedSnapshot = JSON.stringify(buildRecipeData())
+            } else {
+              toast.error('Failed to save recipe')
+            }
+            await update({ reset: false })
           }
-          await update({ reset: false })
-        }
-      }}
-    >
-      <input type="hidden" name="data" value={JSON.stringify(buildRecipeData())} />
-      <Button
-        type="submit"
-        size="sm"
-        disabled={saving || isDraft || !hasChanges}
-        class="min-w-20"
+        }}
       >
-        {#if saving}
-          <svg class="h-3.5 w-3.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-          Saving
-        {:else}
-          Save
+        <input type="hidden" name="data" value={JSON.stringify(buildRecipeData())} />
+        <input type="hidden" name="change_notes" value={changeNotes} />
+        {#if hasChanges}
+          <input
+            type="text"
+            bind:value={changeNotes}
+            placeholder="What changed? (optional)"
+            class="w-44 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-offset-1"
+          />
         {/if}
-      </Button>
-    </form>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={saving || isDraft || !hasChanges}
+          class="min-w-20"
+        >
+          {#if saving}
+            <svg class="h-3.5 w-3.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Saving
+          {:else}
+            Save
+          {/if}
+        </Button>
+      </form>
+    {/if}
   </div>
 </div>
 
@@ -879,99 +949,86 @@
     </CardHeader>
 
     <CardContent class="space-y-4">
-      <!-- Loss & Waste + Autolyse -->
-      <div class="flex flex-wrap items-end gap-4">
-        <div class="w-32">
-          <label for="process-loss" class="mb-1.5 block text-xs font-medium text-muted-foreground">
-            Process Loss %
-          </label>
-          <input
-            id="process-loss"
-            type="number"
-            step="0.1"
-            min="0"
-            max="50"
-            value={round2(processLossPct * 100)}
-            oninput={(e) => {
-              processLossPct = (parseFloat(e.target.value) || 0) / 100
-              scheduleCalc()
-            }}
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            placeholder="2-5"
-          />
-        </div>
-        <div class="w-32">
-          <label for="bake-loss" class="mb-1.5 block text-xs font-medium text-muted-foreground">
-            Bake Loss %
-          </label>
-          <input
-            id="bake-loss"
-            type="number"
-            step="0.1"
-            min="0"
-            max="50"
-            value={round2(bakeLossPct * 100)}
-            oninput={(e) => {
-              bakeLossPct = (parseFloat(e.target.value) || 0) / 100
-              scheduleCalc()
-            }}
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            placeholder="8-18"
-          />
-        </div>
-        <Separator orientation="vertical" class="!h-8 mx-1" />
-        <label class="flex items-center gap-2.5 pb-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            bind:checked={autolyse}
-            onchange={scheduleCalc}
-            class="h-4 w-4 rounded border-input accent-primary"
-          />
-          <span class="text-sm font-medium">Autolyse</span>
-        </label>
-        {#if autolyse}
-          <div class="w-28">
-            <label for="autolyse-dur" class="mb-1.5 block text-xs font-medium text-muted-foreground">
-              Duration (min)
+      {#if recipeReady}
+        <!-- Loss & Waste + Autolyse -->
+        <div class="flex flex-wrap items-end gap-4">
+          <div class="w-32">
+            <label for="process-loss" class="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Process Loss %
             </label>
             <input
-              id="autolyse-dur"
+              id="process-loss"
               type="number"
-              step="1"
-              min="5"
-              max="120"
-              bind:value={autolyseDurationMin}
-              oninput={scheduleCalc}
+              step="0.1"
+              min="0"
+              max="50"
+              value={round2(processLossPct * 100)}
+              oninput={(e) => {
+                processLossPct = (parseFloat(e.target.value) || 0) / 100
+                scheduleCalc()
+              }}
               class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+              placeholder="2-5"
             />
           </div>
-        {/if}
-      </div>
-
-      <!-- Mixer & Mix Type (§7) -->
-      <div class="flex flex-wrap items-end gap-4">
-        <div class="w-48">
-          <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mixer</span>
-          <SelectRoot
-            type="single"
-            value={mixerProfileId}
-            onValueChange={(v) => { mixerProfileId = v }}
-            items={[
-              { value: '', label: 'None' },
-              ...(data.mixerProfiles || []).map((mp) => ({ value: mp.id, label: `${mp.name} (${mp.type})` })),
-            ]}
-          >
-            <SelectTrigger>
-              <span>{mixerProfileId ? (data.mixerProfiles || []).find((m) => m.id === mixerProfileId)?.name || 'Unknown' : 'None'}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="" label="None" />
-              {#each data.mixerProfiles || [] as mp}
-                <SelectItem value={mp.id} label="{mp.name} ({mp.type})" />
-              {/each}
-            </SelectContent>
-          </SelectRoot>
+          <div class="w-32">
+            <label for="bake-loss" class="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Bake Loss %
+            </label>
+            <input
+              id="bake-loss"
+              type="number"
+              step="0.1"
+              min="0"
+              max="50"
+              value={round2(bakeLossPct * 100)}
+              oninput={(e) => {
+                bakeLossPct = (parseFloat(e.target.value) || 0) / 100
+                scheduleCalc()
+              }}
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+              placeholder="8-18"
+            />
+          </div>
+          <Separator orientation="vertical" class="!h-8 mx-1" />
+          <label class="flex items-center gap-2.5 pb-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              bind:checked={autolyse}
+              onchange={scheduleCalc}
+              class="h-4 w-4 rounded border-input accent-primary"
+            />
+            <span class="text-sm font-medium">Autolyse</span>
+          </label>
+          {#if autolyse}
+            <div class="w-28">
+              <label for="autolyse-dur" class="mb-1.5 block text-xs font-medium text-muted-foreground">
+                Duration (min)
+              </label>
+              <input
+                id="autolyse-dur"
+                type="number"
+                step="1"
+                min="5"
+                max="120"
+                bind:value={autolyseDurationMin}
+                oninput={scheduleCalc}
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+              />
+            </div>
+          {/if}
         </div>
+
+        <!-- Mixer & Mix Type (§7) -->
+        <div class="flex flex-wrap items-end gap-4">
+          <div class="w-52">
+            <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mixer</span>
+            <MixerPicker
+              mixerProfiles={data.mixerProfiles || []}
+              bind:value={mixerProfileId}
+              onCreateNew={() => { newMixerData = makeBlankMixer(); showCreateMixer = true }}
+            />
+          </div>
         <div class="w-40">
           <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mix Type</span>
           <SelectRoot
@@ -1006,6 +1063,8 @@
           </div>
         {/if}
       </div>
+
+      {/if}
 
       <!-- Summary badges -->
       {#if calculated}
@@ -1075,7 +1134,7 @@
                       bind:value={ing.name}
                       oninput={(e) => { acOpen(ing.id, e.target.value); onFieldChange() }}
                       onfocus={(e) => { acOpen(ing.id, e.target.value || '') }}
-                      onblur={() => { setTimeout(acClose, 150) }}
+                      onblur={() => { inferCategory(ing); setTimeout(acClose, 150) }}
                       onkeydown={(e) => acKeydown(e, ing)}
                       placeholder="Ingredient name"
                       autocomplete="off"
@@ -1599,3 +1658,142 @@
     {/if}
   </Card>
 </div>
+
+<!-- Create Mixer Dialog -->
+<DialogRoot bind:open={showCreateMixer}>
+  <DialogContent class="max-w-md">
+    <div class="space-y-1.5">
+      <DialogTitle class="text-lg font-semibold">New Mixer Profile</DialogTitle>
+      <DialogDescription class="text-sm text-muted-foreground">
+        Create a mixer to compute friction and mixing durations.
+      </DialogDescription>
+    </div>
+
+    <form
+      method="POST"
+      action="?/createMixer"
+      use:enhance={() => {
+        return async ({ result, update }) => {
+          if (result.type === 'success') {
+            toast.success('Mixer created')
+            showCreateMixer = false
+            await update({ reset: false })
+            // Auto-select the newly created mixer
+            if (result.data?.mixerId) {
+              mixerProfileId = result.data.mixerId
+            }
+          } else {
+            toast.error('Failed to create mixer')
+            await update({ reset: false })
+          }
+        }
+      }}
+    >
+      <input type="hidden" name="data" value={JSON.stringify(newMixerData)} />
+
+      <div class="space-y-4">
+        <!-- Name + Type -->
+        <div class="flex gap-3">
+          <div class="flex-1">
+            <label for="new-mixer-name" class="mb-1.5 block text-xs font-medium text-muted-foreground">Name</label>
+            <input
+              id="new-mixer-name"
+              type="text"
+              bind:value={newMixerData.name}
+              placeholder="e.g. Caplain Spiral"
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            />
+          </div>
+          <div class="w-36">
+            <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Type</span>
+            <SelectRoot
+              type="single"
+              value={newMixerData.type}
+              onValueChange={(v) => onNewMixerTypeChange(v)}
+              items={MIXER_TYPES.map((t) => ({ value: t, label: t }))}
+            >
+              <SelectTrigger>
+                <span>{newMixerData.type}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {#each MIXER_TYPES as t}
+                  <SelectItem value={t} label={t} />
+                {/each}
+              </SelectContent>
+            </SelectRoot>
+          </div>
+        </div>
+
+        <!-- Friction + RPMs -->
+        <div class="flex gap-3">
+          <div class="flex-1">
+            <label for="new-friction" class="mb-1.5 block text-xs font-medium text-muted-foreground">Friction (&deg;C)</label>
+            <input
+              id="new-friction"
+              type="number"
+              step="0.5"
+              min="0"
+              bind:value={newMixerData.friction_factor}
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            />
+          </div>
+          <div class="flex-1">
+            <label for="new-rpm1" class="mb-1.5 block text-xs font-medium text-muted-foreground">1st Speed RPM</label>
+            <input
+              id="new-rpm1"
+              type="number"
+              step="1"
+              min="0"
+              bind:value={newMixerData.first_speed_rpm}
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            />
+          </div>
+          <div class="flex-1">
+            <label for="new-rpm2" class="mb-1.5 block text-xs font-medium text-muted-foreground">2nd Speed RPM</label>
+            <input
+              id="new-rpm2"
+              type="number"
+              step="1"
+              min="0"
+              bind:value={newMixerData.second_speed_rpm}
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            />
+          </div>
+        </div>
+
+        <!-- Calibrations -->
+        {#if newMixerData.type !== 'HAND'}
+          <div>
+            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Calibrations (1st speed rounds)
+            </h4>
+            <div class="flex gap-3">
+              {#each newMixerData.calibrations as cal, idx}
+                <div class="flex-1">
+                  <label class="mb-1.5 block text-xs font-medium text-muted-foreground">{cal.mix_type}</label>
+                  <input
+                    type="number"
+                    step="5"
+                    min="0"
+                    bind:value={newMixerData.calibrations[idx].first_speed_rounds}
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  />
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" type="button" onclick={() => (showCreateMixer = false)}>
+            Cancel
+          </Button>
+          <Button size="sm" type="submit" disabled={!newMixerData.name?.trim()}>
+            Create Mixer
+          </Button>
+        </div>
+      </div>
+    </form>
+  </DialogContent>
+</DialogRoot>

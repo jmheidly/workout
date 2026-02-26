@@ -3,11 +3,13 @@ import {
   getRecipe,
   updateRecipe,
   getMixerProfiles,
+  createMixerProfile,
   getIngredientLibrary,
   syncIngredientLibrary,
   getRecipeVersions,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
+import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
@@ -28,12 +30,13 @@ export function load({ params, locals }) {
   const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
   const versionCount = getRecipeVersions(params.id).length
 
-  return { recipe, calculated, mixerProfiles, ingredientLibrary, versionCount }
+  return { recipe, calculated, mixerProfiles, ingredientLibrary, versionCount, canEdit: locals.bakery.role !== 'viewer' }
 }
 
 /** @type {import('./$types').Actions} */
 export const actions = {
   save: async ({ request, params, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
     const dataStr = form.get('data')?.toString()
     const changeNotes = form.get('change_notes')?.toString() || null
@@ -68,5 +71,24 @@ export const actions = {
     const versionCount = getRecipeVersions(params.id).length
 
     return { success: true, recipe, calculated, ingredientLibrary, versionCount }
+  },
+
+  createMixer: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
+    const form = await request.formData()
+    const dataStr = form.get('data')?.toString()
+    if (!dataStr) return fail(400, { error: 'Missing data' })
+
+    let data
+    try {
+      data = JSON.parse(dataStr)
+    } catch {
+      return fail(400, { error: 'Invalid data' })
+    }
+
+    if (!data.name?.trim()) return fail(400, { error: 'Name is required' })
+
+    const mixerId = createMixerProfile(locals.user.id, locals.bakery.id, data)
+    return { success: true, mixerId }
   },
 }

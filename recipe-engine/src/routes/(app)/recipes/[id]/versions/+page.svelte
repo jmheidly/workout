@@ -15,6 +15,11 @@
 
   let { data } = $props()
 
+  // Build mixer ID → name lookup
+  const mixerNames = Object.fromEntries(
+    (data.mixerProfiles || []).map((m) => [m.id, m.name])
+  )
+
   const CATEGORY_COLORS = {
     FLOUR: 'bg-amber-100 text-amber-800',
     LIQUID: 'bg-blue-100 text-blue-800',
@@ -98,21 +103,37 @@
     return v.creator_name || v.creator_email?.split('@')[0] || 'Unknown'
   }
 
+  const FIELD_LABELS = {
+    name: 'Name',
+    yield_per_piece: 'Yield/piece',
+    ddt: 'DDT',
+    autolyse: 'Autolyse',
+    autolyse_duration_min: 'Autolyse duration',
+    process_loss_pct: 'Process loss',
+    bake_loss_pct: 'Bake loss',
+    mix_type: 'Mix type',
+    mixer_profile_id: 'Mixer',
+    base_qty: 'Qty',
+    category: 'Category',
+    sort_order: 'Order',
+  }
+
   function formatChangeValue(field, val) {
-    if (val === null || val === undefined) return '—'
+    if (val === null || val === undefined) return 'None'
     if (field === 'process_loss_pct' || field === 'bake_loss_pct') {
       return `${((val || 0) * 100).toFixed(1)}%`
     }
     if (field === 'ddt') return `${val}°C`
     if (field === 'yield_per_piece') return `${val}g`
     if (field === 'autolyse') return val ? 'Yes' : 'No'
+    if (field === 'autolyse_duration_min') return `${val} min`
+    if (field === 'mixer_profile_id') return mixerNames[val] || 'Unknown mixer'
     return String(val)
   }
 
   function formatFieldName(field) {
-    if (field === 'base_qty') return 'qty'
     if (field.startsWith('preferment_pct_')) return 'PF%'
-    return field
+    return FIELD_LABELS[field] || field
   }
 
   function formatIngValue(field, val) {
@@ -164,7 +185,7 @@
               <div class="flex items-center gap-2 text-sm">
                 {#if change.type === 'param_changed'}
                   <Badge variant="outline" class="text-xs">Recipe</Badge>
-                  <span class="text-muted-foreground">{change.field}:</span>
+                  <span class="text-muted-foreground">{formatFieldName(change.field)}:</span>
                   <span class="line-through text-red-600">{formatChangeValue(change.field, change.old)}</span>
                   <span>→</span>
                   <span class="text-green-600">{formatChangeValue(change.field, change.new)}</span>
@@ -231,6 +252,10 @@
               <span>{side.snapshot.ddt}°C</span>
               <span class="text-muted-foreground">Mix type</span>
               <span>{side.snapshot.mix_type}</span>
+              {#if side.snapshot.mixer_profile_id}
+                <span class="text-muted-foreground">Mixer</span>
+                <span>{mixerNames[side.snapshot.mixer_profile_id] || '—'}</span>
+              {/if}
               {#if side.snapshot.process_loss_pct}
                 <span class="text-muted-foreground">Process loss</span>
                 <span>{(side.snapshot.process_loss_pct * 100).toFixed(1)}%</span>
