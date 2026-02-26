@@ -165,19 +165,36 @@
       <Card.CardContent>
         <div class="space-y-3">
           {#each data.invitations as invitation}
-            <div class="flex items-center justify-between rounded-lg border p-3">
-              <div>
-                <div class="text-sm">{invitation.email}</div>
-                <div class="text-xs text-muted-foreground">
-                  Role: {invitation.role} &middot; Expires: {new Date(invitation.expires_at).toLocaleDateString()}
+            <div class="rounded-lg border p-3">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm">{invitation.email}</div>
+                  <div class="text-xs text-muted-foreground">
+                    Role: {invitation.role} &middot; Expires: {new Date(invitation.expires_at).toLocaleDateString()}
+                  </div>
                 </div>
+                <form method="POST" action="?/cancelInvite" use:enhance>
+                  <input type="hidden" name="id" value={invitation.id} />
+                  <Button type="submit" variant="ghost" size="sm" class="text-destructive">
+                    Cancel
+                  </Button>
+                </form>
               </div>
-              <form method="POST" action="?/cancelInvite" use:enhance>
-                <input type="hidden" name="id" value={invitation.id} />
-                <Button type="submit" variant="ghost" size="sm" class="text-destructive">
-                  Cancel
+              <div class="mt-2 flex gap-2">
+                <input
+                  type="text"
+                  readonly
+                  value="{$page.url.origin}/invite/{invitation.token}"
+                  class="flex-1 rounded border bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onclick={() => navigator.clipboard.writeText(`${$page.url.origin}/invite/${invitation.token}`)}
+                >
+                  Copy
                 </Button>
-              </form>
+              </div>
             </div>
           {/each}
         </div>

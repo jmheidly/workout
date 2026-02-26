@@ -6,7 +6,7 @@ import {
   createMixerProfile,
   getIngredientLibrary,
   syncIngredientLibrary,
-  getRecipeVersions,
+  getRecipeVersionCount,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
@@ -28,7 +28,7 @@ export function load({ params, locals }) {
 
   const mixerProfiles = getMixerProfiles(locals.bakery.id)
   const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
-  const versionCount = getRecipeVersions(params.id).length
+  const versionCount = getRecipeVersionCount(params.id)
 
   return { recipe, calculated, mixerProfiles, ingredientLibrary, versionCount, canEdit: locals.bakery.role !== 'viewer' }
 }
@@ -68,7 +68,7 @@ export const actions = {
     }
 
     const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
-    const versionCount = getRecipeVersions(params.id).length
+    const versionCount = getRecipeVersionCount(params.id)
 
     return { success: true, recipe, calculated, ingredientLibrary, versionCount }
   },

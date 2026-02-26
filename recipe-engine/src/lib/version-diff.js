@@ -34,6 +34,13 @@ export function diffVersions(snapshotA, snapshotB) {
     }
   }
 
+  // autolyse_overrides — object comparison (sparse map of ingredient overrides)
+  const aOverrides = snapshotA.autolyse_overrides || {}
+  const bOverrides = snapshotB.autolyse_overrides || {}
+  if (JSON.stringify(aOverrides) !== JSON.stringify(bOverrides)) {
+    changes.push({ type: 'param_changed', field: 'autolyse_overrides', old: aOverrides, new: bOverrides })
+  }
+
   // ── Ingredient changes (UUID-matched) ──────────────────────
   const aIngs = snapshotA.ingredients || []
   const bIngs = snapshotB.ingredients || []
@@ -207,6 +214,10 @@ export function summarizeChanges(changes) {
       else parts.push(`Mixer ${c.old} → ${c.new}`)
     } else if (c.field === 'autolyse') {
       parts.push(c.new ? 'Enabled autolyse' : 'Disabled autolyse')
+    } else if (c.field === 'autolyse_duration_min') {
+      parts.push(`Autolyse ${c.old}min → ${c.new}min`)
+    } else if (c.field === 'autolyse_overrides') {
+      parts.push('Updated autolyse split')
     }
   }
 

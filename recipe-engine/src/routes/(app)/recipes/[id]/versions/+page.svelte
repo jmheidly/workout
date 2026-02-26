@@ -1,8 +1,8 @@
 <script>
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
-  import { diffVersions, summarizeChanges } from '$lib/version-diff.js'
-  import { formatPct, formatGrams } from '$lib/utils.js'
+  import { diffVersions } from '$lib/version-diff.js'
+  import { formatPct } from '$lib/utils.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -91,6 +91,7 @@
     ddt: 'DDT',
     autolyse: 'Autolyse',
     autolyse_duration_min: 'Autolyse duration',
+    autolyse_overrides: 'Autolyse split',
     process_loss_pct: 'Process loss',
     bake_loss_pct: 'Bake loss',
     mix_type: 'Mix type',
@@ -109,8 +110,35 @@
     if (field === 'yield_per_piece') return `${val}g`
     if (field === 'autolyse') return val ? 'Yes' : 'No'
     if (field === 'autolyse_duration_min') return `${val} min`
+    if (field === 'autolyse_overrides') {
+      return formatAutolyseOverrides(val)
+    }
     if (field === 'mixer_profile_id') return mixerNames[val] || 'Unknown mixer'
     return String(val)
+  }
+
+  // Build ingredient ID → name lookup from all available snapshots
+  let ingNameMap = $derived.by(() => {
+    const map = {}
+    // From compare data
+    if (data.compareData) {
+      for (const ing of data.compareData.a.snapshot.ingredients || []) map[ing.id] = ing.name
+      for (const ing of data.compareData.b.snapshot.ingredients || []) map[ing.id] = ing.name
+    }
+    // From current recipe
+    for (const ing of data.recipe.ingredients || []) map[ing.id] = ing.name
+    return map
+  })
+
+  function formatAutolyseOverrides(val) {
+    if (!val || typeof val !== 'object') return 'Default split'
+    const entries = Object.entries(val)
+    if (entries.length === 0) return 'Default split'
+    const parts = entries.map(([id, list]) => {
+      const name = ingNameMap[id] || id.slice(0, 8)
+      return `${name} → ${list}`
+    })
+    return parts.join(', ')
   }
 
   function formatFieldName(field) {
@@ -237,11 +265,16 @@
               { field: 'bake_loss_pct', show: side.snapshot.bake_loss_pct || other.bake_loss_pct },
               { field: 'autolyse', show: side.snapshot.autolyse || other.autolyse },
               { field: 'autolyse_duration_min', show: side.snapshot.autolyse || other.autolyse },
+              { field: 'autolyse_overrides', show: (side.snapshot.autolyse || other.autolyse) && (Object.keys(side.snapshot.autolyse_overrides || {}).length > 0 || Object.keys(other.autolyse_overrides || {}).length > 0) },
             ]}
             <div class="mb-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
               {#each paramRows as row}
                 {#if row.show}
-                  {@const changed = (side.snapshot[row.field] ?? null) !== (other[row.field] ?? null)}
+                  {@const sVal = side.snapshot[row.field] ?? null}
+                  {@const oVal = other[row.field] ?? null}
+                  {@const changed = typeof sVal === 'object' && sVal !== null
+                    ? JSON.stringify(sVal) !== JSON.stringify(oVal)
+                    : sVal !== oVal}
                   <span class="text-muted-foreground">{FIELD_LABELS[row.field] || row.field}</span>
                   <span class={changed ? 'rounded bg-yellow-50 px-1 font-medium' : ''}>
                     {formatChangeValue(row.field, side.snapshot[row.field])}
@@ -295,48 +328,50 @@
         </CardContent>
       </Card>
     {:else}
-      <!-- Current version (lives in recipes table) -->
-      <Card class="border-primary/30">
-        <CardContent class="py-4">
-          <div class="flex items-start gap-4">
-            <div class="flex flex-col items-center">
-              <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
-                v{data.recipe.version}
-              </div>
-              {#if data.versions.length > 0}
-                <div class="mt-1 h-4 w-px bg-border"></div>
-              {/if}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium">Current version</span>
-                <Badge variant="secondary" class="text-xs">Latest</Badge>
-              </div>
-              <p class="mt-0.5 text-xs text-muted-foreground">
-                Last saved {formatDate(data.recipe.updated_at)}
-              </p>
-              {#if data.changeSummaries?.[data.recipe.version]}
-                <p class="mt-1 text-sm text-foreground/80">
-                  {data.changeSummaries[data.recipe.version]}
-                </p>
-              {/if}
-            </div>
-            <div class="flex items-center gap-1">
-              <Button
-                variant={compareA === data.recipe.version || compareB === data.recipe.version ? 'default' : 'outline'}
-                size="sm"
-                onclick={() => toggleCompare(data.recipe.version)}
-              >
-                {#if compareA === data.recipe.version || compareB === data.recipe.version}
-                  Selected
-                {:else}
-                  Compare
+      <!-- Current version (lives in recipes table) — only on page 1 -->
+      {#if data.pagination.page === 1}
+        <Card class="border-primary/30">
+          <CardContent class="py-4">
+            <div class="flex items-start gap-4">
+              <div class="flex flex-col items-center">
+                <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                  v{data.recipe.version}
+                </div>
+                {#if data.versions.length > 0}
+                  <div class="mt-1 h-4 w-px bg-border"></div>
                 {/if}
-              </Button>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">Current version</span>
+                  <Badge variant="secondary" class="text-xs">Latest</Badge>
+                </div>
+                <p class="mt-0.5 text-xs text-muted-foreground">
+                  Last saved {formatDate(data.recipe.updated_at)}
+                </p>
+                {#if data.changeSummaries?.[data.recipe.version]}
+                  <p class="mt-1 text-sm text-foreground/80">
+                    {data.changeSummaries[data.recipe.version]}
+                  </p>
+                {/if}
+              </div>
+              <div class="flex items-center gap-1">
+                <Button
+                  variant={compareA === data.recipe.version || compareB === data.recipe.version ? 'default' : 'outline'}
+                  size="sm"
+                  onclick={() => toggleCompare(data.recipe.version)}
+                >
+                  {#if compareA === data.recipe.version || compareB === data.recipe.version}
+                    Selected
+                  {:else}
+                    Compare
+                  {/if}
+                </Button>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      {/if}
 
       <!-- Historical versions -->
       {#each data.versions as version, i (version.id)}
@@ -394,6 +429,35 @@
       {#if compareA !== null && compareB === null}
         <div class="rounded-lg border border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-center text-sm text-primary">
           Select a second version to compare
+        </div>
+      {/if}
+
+      <!-- Pagination -->
+      {#if data.pagination.totalPages > 1}
+        <div class="flex items-center justify-center gap-2 pt-2">
+          {#if data.pagination.page > 1}
+            <Button
+              variant="outline"
+              size="sm"
+              href="?page={data.pagination.page - 1}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              Newer
+            </Button>
+          {/if}
+          <span class="text-sm text-muted-foreground">
+            Page {data.pagination.page} of {data.pagination.totalPages}
+          </span>
+          {#if data.pagination.page < data.pagination.totalPages}
+            <Button
+              variant="outline"
+              size="sm"
+              href="?page={data.pagination.page + 1}"
+            >
+              Older
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </Button>
+          {/if}
         </div>
       {/if}
     {/if}
