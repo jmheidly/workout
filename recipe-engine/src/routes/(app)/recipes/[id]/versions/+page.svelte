@@ -245,25 +245,27 @@
           </CardHeader>
           <CardContent>
             <!-- Recipe params -->
-            <div class="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-              <span class="text-muted-foreground">Yield/piece</span>
-              <span>{side.snapshot.yield_per_piece}g</span>
-              <span class="text-muted-foreground">DDT</span>
-              <span>{side.snapshot.ddt}°C</span>
-              <span class="text-muted-foreground">Mix type</span>
-              <span>{side.snapshot.mix_type}</span>
-              {#if side.snapshot.mixer_profile_id}
-                <span class="text-muted-foreground">Mixer</span>
-                <span>{mixerNames[side.snapshot.mixer_profile_id] || '—'}</span>
-              {/if}
-              {#if side.snapshot.process_loss_pct}
-                <span class="text-muted-foreground">Process loss</span>
-                <span>{(side.snapshot.process_loss_pct * 100).toFixed(1)}%</span>
-              {/if}
-              {#if side.snapshot.bake_loss_pct}
-                <span class="text-muted-foreground">Bake loss</span>
-                <span>{(side.snapshot.bake_loss_pct * 100).toFixed(1)}%</span>
-              {/if}
+            {@const other = side === cmp.a ? cmp.b.snapshot : cmp.a.snapshot}
+            {@const paramRows = [
+              { field: 'yield_per_piece', show: true },
+              { field: 'ddt', show: true },
+              { field: 'mix_type', show: true },
+              { field: 'mixer_profile_id', show: side.snapshot.mixer_profile_id || other.mixer_profile_id },
+              { field: 'process_loss_pct', show: side.snapshot.process_loss_pct || other.process_loss_pct },
+              { field: 'bake_loss_pct', show: side.snapshot.bake_loss_pct || other.bake_loss_pct },
+              { field: 'autolyse', show: side.snapshot.autolyse || other.autolyse },
+              { field: 'autolyse_duration_min', show: side.snapshot.autolyse || other.autolyse },
+            ]}
+            <div class="mb-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+              {#each paramRows as row}
+                {#if row.show}
+                  {@const changed = (side.snapshot[row.field] ?? null) !== (other[row.field] ?? null)}
+                  <span class="text-muted-foreground">{FIELD_LABELS[row.field] || row.field}</span>
+                  <span class={changed ? 'rounded bg-yellow-50 px-1 font-medium' : ''}>
+                    {formatChangeValue(row.field, side.snapshot[row.field])}
+                  </span>
+                {/if}
+              {/each}
             </div>
 
             <Separator class="my-2" />
