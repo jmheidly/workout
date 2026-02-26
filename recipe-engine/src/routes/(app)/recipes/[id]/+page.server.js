@@ -2,8 +2,6 @@ import { error, fail } from '@sveltejs/kit'
 import {
   getRecipe,
   updateRecipe,
-  getMixerProfiles,
-  createMixerProfile,
   getIngredientLibrary,
   syncIngredientLibrary,
   getRecipeVersionCount,
@@ -26,11 +24,10 @@ export function load({ params, locals }) {
     // return recipe without calculations if engine fails
   }
 
-  const mixerProfiles = getMixerProfiles(locals.bakery.id)
   const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
   const versionCount = getRecipeVersionCount(params.id)
 
-  return { recipe, calculated, mixerProfiles, ingredientLibrary, versionCount, canEdit: locals.bakery.role !== 'viewer' }
+  return { recipe, calculated, ingredientLibrary, versionCount, canEdit: locals.bakery.role !== 'viewer' }
 }
 
 /** @type {import('./$types').Actions} */
@@ -73,22 +70,4 @@ export const actions = {
     return { success: true, recipe, calculated, ingredientLibrary, versionCount }
   },
 
-  createMixer: async ({ request, locals }) => {
-    requireRole(locals, 'owner', 'admin', 'member')
-    const form = await request.formData()
-    const dataStr = form.get('data')?.toString()
-    if (!dataStr) return fail(400, { error: 'Missing data' })
-
-    let data
-    try {
-      data = JSON.parse(dataStr)
-    } catch {
-      return fail(400, { error: 'Invalid data' })
-    }
-
-    if (!data.name?.trim()) return fail(400, { error: 'Name is required' })
-
-    const mixerId = createMixerProfile(locals.user.id, locals.bakery.id, data)
-    return { success: true, mixerId }
-  },
 }

@@ -3,8 +3,7 @@
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
   import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
-  import { FERMENTATION_DEFAULTS, formatDuration } from '$lib/preferment-defaults.js'
-  import { MIX_TYPE_NAMES, MIXER_TYPES, MIXER_TYPE_DEFAULTS, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { FERMENTATION_DEFAULTS, PF_SEED_BAKERS_PCT, formatDuration } from '$lib/preferment-defaults.js'
   import { COMMON_INGREDIENTS } from '$lib/common-ingredients.js'
   import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -23,13 +22,6 @@
     SelectContent,
     SelectItem,
   } from '$lib/components/ui/select/index.js'
-  import {
-    DialogRoot,
-    DialogContent,
-    DialogTitle,
-    DialogDescription,
-  } from '$lib/components/ui/dialog/index.js'
-  import MixerPicker from '$lib/components/mixer-picker.svelte'
 
   // ── Constants ──────────────────────────────────────────────
 
@@ -56,12 +48,13 @@
   const SELF_REF_PF_TYPES = new Set(['LEVAIN', 'PATE_FERMENTEE'])
 
   // Required ingredient categories per PF type (auto-seeded, non-removable)
+  // Per §5.3: all types need FLOUR + LIQUID; yeast-based types also need LEAVENING
   const PF_REQUIRED_CATEGORIES = {
-    POOLISH: ['LEAVENING'],
-    BIGA: ['LEAVENING'],
-    LEVAIN: [],
-    PATE_FERMENTEE: [],
-    SPONGE: ['LEAVENING'],
+    POOLISH: ['FLOUR', 'LIQUID', 'LEAVENING'],
+    BIGA: ['FLOUR', 'LIQUID', 'LEAVENING'],
+    LEVAIN: ['FLOUR', 'LIQUID'],
+    PATE_FERMENTEE: ['FLOUR', 'LIQUID', 'LEAVENING'],
+    SPONGE: ['FLOUR', 'LIQUID', 'LEAVENING'],
     CUSTOM: [],
   }
 
@@ -110,44 +103,6 @@
   let autolyse = $state(!!data.recipe.autolyse)
   let autolyseDurationMin = $state(data.recipe.autolyse_duration_min || 20)
   let autolyseOverrides = $state(data.recipe.autolyse_overrides || {})
-
-  // Mixer & Mix Type (§7)
-  let mixerProfileId = $state(data.recipe.mixer_profile_id || '')
-  let mixType = $state(data.recipe.mix_type || 'Improved Mix')
-
-  // Create Mixer dialog
-  const CAL_MIX_TYPES = ['Improved Mix', 'Intensive Mix', 'Short Improved']
-  let showCreateMixer = $state(false)
-  let newMixerData = $state(makeBlankMixer())
-
-  function makeBlankMixer() {
-    const defaults = MIXER_TYPE_DEFAULTS['SPIRAL']
-    return {
-      name: '',
-      type: 'SPIRAL',
-      friction_factor: defaults.friction,
-      first_speed_rpm: defaults.first_speed_rpm,
-      second_speed_rpm: defaults.second_speed_rpm,
-      calibrations: CAL_MIX_TYPES.map((mt) => ({
-        mix_type: mt,
-        first_speed_rounds: defaults.cal[mt] || 0,
-      })),
-    }
-  }
-
-  function onNewMixerTypeChange(newType) {
-    newMixerData.type = newType
-    const defaults = MIXER_TYPE_DEFAULTS[newType]
-    if (defaults) {
-      newMixerData.friction_factor = defaults.friction
-      newMixerData.first_speed_rpm = defaults.first_speed_rpm
-      newMixerData.second_speed_rpm = defaults.second_speed_rpm
-      newMixerData.calibrations = CAL_MIX_TYPES.map((mt) => ({
-        mix_type: mt,
-        first_speed_rounds: defaults.cal[mt] || 0,
-      }))
-    }
-  }
 
   // Ingredient Library (autocomplete)
   let ingredientLibrary = $state(data.ingredientLibrary || [])
@@ -254,19 +209,6 @@
 
   // ── Derived ────────────────────────────────────────────────
 
-  let selectedMixer = $derived(
-    mixerProfileId
-      ? (data.mixerProfiles || []).find((m) => m.id === mixerProfileId) || null
-      : null
-  )
-
-  let mixingInfo = $derived.by(() => {
-    if (!selectedMixer) return null
-    const ef = effectiveFriction(selectedMixer.friction_factor, mixType)
-    const dur = calcMixDurations(selectedMixer, mixType)
-    return { effectiveFriction: ef, ...dur }
-  })
-
   let pfIngredients = $derived(ingredients.filter((i) => i.category === 'PREFERMENT'))
 
   let recipeReady = $derived(
@@ -345,8 +287,6 @@
       autolyse: autolyse ? 1 : 0,
       autolyse_duration_min: autolyseDurationMin,
       autolyse_overrides: autolyseOverrides,
-      mixer_profile_id: mixerProfileId || null,
-      mix_type: mixType,
       ingredients: ingredients.map((ing, idx) => ({
         id: ing.id,
         name: ing.name,
@@ -385,8 +325,6 @@
     autolyse = !!s.autolyse
     autolyseDurationMin = s.autolyse_duration_min || 20
     autolyseOverrides = s.autolyse_overrides || {}
-    mixerProfileId = s.mixer_profile_id || ''
-    mixType = s.mix_type || 'Improved Mix'
     ingredients = (s.ingredients || []).map((ing) => ({
       ...ing,
       preferment_bakers_pcts: { ...(ing.preferment_bakers_pcts || {}) },
@@ -453,34 +391,39 @@
   }
 
   /**
-   * Auto-seed required ingredients for a PF type:
+   * Auto-seed required ingredients for a PF type (per §5.3):
    * - Self-reference for LEVAIN / PATE_FERMENTEE
-   * - First LEAVENING ingredient for POOLISH / BIGA / SPONGE
+   * - FLOUR + LIQUID for all types, LEAVENING for yeast-based types
    */
   function seedPfRequiredIngredients(pfId, pfType) {
-    if (!pfGrams[pfId]) pfGrams[pfId] = {}
+    const grams = pfGrams[pfId] || {}
     const pfIng = ingredients.find((i) => i.id === pfId)
 
     // Self-reference (old starter / old dough)
     if (SELF_REF_PF_TYPES.has(pfType)) {
-      if (pfGrams[pfId][pfId] == null) {
-        pfGrams[pfId][pfId] = 0
+      if (grams[pfId] == null) {
+        grams[pfId] = 0
         if (pfIng) pfIng.preferment_bakers_pcts[pfId] = 0.2
       }
     }
 
-    // Required categories (e.g. LEAVENING for yeast-based PFs)
+    // §5.3: Seed existing recipe ingredients with default Baker's % per PF type
     const requiredCats = PF_REQUIRED_CATEGORIES[pfType] || []
+    const seedBps = PF_SEED_BAKERS_PCT[pfType] || {}
+    const alreadySeeded = new Set(Object.keys(grams))
     for (const cat of requiredCats) {
-      // Find the first recipe ingredient matching this category that isn't already in the PF
       const match = ingredients.find(
-        (i) => i.category === cat && i.id !== pfId && pfGrams[pfId][i.id] == null
+        (i) => i.category === cat && i.id !== pfId && !alreadySeeded.has(i.id)
       )
       if (match) {
-        pfGrams[pfId][match.id] = 0
-        match.preferment_bakers_pcts[pfId] = 0
+        grams[match.id] = 0
+        match.preferment_bakers_pcts[pfId] = seedBps[cat] ?? 0
+        alreadySeeded.add(match.id)
       }
     }
+
+    // Reassign to trigger reactivity
+    pfGrams[pfId] = { ...grams }
   }
 
   function onFieldChange() {
@@ -523,6 +466,43 @@
       }
     }
     return grams
+  }
+
+  /**
+   * Recalculate PF gram breakdown from Baker's % when the PF's base_qty changes.
+   * Mirrors the engine's calcPrefermentBreakdown formula.
+   */
+  function recalcGramsFromBps(pfId) {
+    const pfIng = ingredients.find((i) => i.id === pfId)
+    if (!pfIng || pfIng.base_qty <= 0) return
+
+    const totalBp = ingredients.reduce((sum, ing) => {
+      const bp = ing.preferment_bakers_pcts?.[pfId]
+      return sum + (bp != null ? bp : 0)
+    }, 0)
+    if (totalBp <= 0) return
+
+    const grams = {}
+    let largestId = null
+    let largestVal = -1
+    let runningSum = 0
+    for (const ing of ingredients) {
+      const bp = ing.preferment_bakers_pcts?.[pfId]
+      if (bp != null && bp > 0) {
+        const g = round2((pfIng.base_qty / totalBp) * bp)
+        grams[ing.id] = g
+        runningSum += g
+        if (g > largestVal) { largestVal = g; largestId = ing.id }
+      } else if (pfGrams[pfId]?.[ing.id] != null) {
+        grams[ing.id] = 0
+      }
+    }
+    // Absorb rounding drift into the largest component
+    const diff = round2(pfIng.base_qty - round2(runningSum))
+    if (diff !== 0 && largestId) {
+      grams[largestId] = round2(grams[largestId] + diff)
+    }
+    pfGrams[pfId] = grams
   }
 
   function onPfGramChange(pfId, ingId, value) {
@@ -1099,51 +1079,6 @@
           {/if}
         </div>
 
-        <!-- Mixer & Mix Type (§7) -->
-        <div class="flex flex-wrap items-end gap-4">
-          <div class="w-52">
-            <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mixer</span>
-            <MixerPicker
-              mixerProfiles={data.mixerProfiles || []}
-              bind:value={mixerProfileId}
-              onCreateNew={() => { newMixerData = makeBlankMixer(); showCreateMixer = true }}
-            />
-          </div>
-        <div class="w-40">
-          <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Mix Type</span>
-          <SelectRoot
-            type="single"
-            value={mixType}
-            onValueChange={(v) => { mixType = v }}
-            items={MIX_TYPE_NAMES.map((mt) => ({ value: mt, label: mt }))}
-          >
-            <SelectTrigger>
-              <span>{mixType}</span>
-            </SelectTrigger>
-            <SelectContent>
-              {#each MIX_TYPE_NAMES as mt}
-                <SelectItem value={mt} label={mt} />
-              {/each}
-            </SelectContent>
-          </SelectRoot>
-        </div>
-        {#if mixingInfo}
-          <div class="flex items-center gap-3 pb-2 text-sm">
-            <Badge variant="secondary" class="bg-emerald-50 text-emerald-700 font-normal tabular-nums">
-              Friction {mixingInfo.effectiveFriction.toFixed(1)}&deg;C
-            </Badge>
-            <Badge variant="secondary" class="font-normal tabular-nums">
-              {#if mixType === 'Short Mix'}
-                1st: {mixingInfo.first_speed_min.toFixed(1)}m
-              {:else}
-                1st: {mixingInfo.first_speed_min.toFixed(1)}m, 2nd: {mixingInfo.second_speed_min.toFixed(1)}m
-              {/if}
-              ({(mixingInfo.first_speed_min + mixingInfo.second_speed_min).toFixed(1)}m total)
-            </Badge>
-          </div>
-        {/if}
-      </div>
-
       {/if}
 
       <!-- Summary badges -->
@@ -1242,8 +1177,8 @@
                     step="0.01"
                     min="0"
                     bind:value={ing.base_qty}
-                    oninput={onFieldChange}
-                    onblur={() => { ing.base_qty = round2(ing.base_qty) }}
+                    oninput={() => { if (ing.category === 'PREFERMENT') recalcGramsFromBps(ing.id); onFieldChange() }}
+                    onblur={() => { ing.base_qty = round2(ing.base_qty); if (ing.category === 'PREFERMENT') recalcGramsFromBps(ing.id) }}
                     class="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-sm text-right tabular-nums outline-none transition-colors focus:border-input focus:bg-background focus:ring-1 focus:ring-ring"
                   />
                 </td>
@@ -1765,141 +1700,3 @@
   </Card>
 </div>
 
-<!-- Create Mixer Dialog -->
-<DialogRoot bind:open={showCreateMixer}>
-  <DialogContent class="max-w-md">
-    <div class="space-y-1.5">
-      <DialogTitle class="text-lg font-semibold">New Mixer Profile</DialogTitle>
-      <DialogDescription class="text-sm text-muted-foreground">
-        Create a mixer to compute friction and mixing durations.
-      </DialogDescription>
-    </div>
-
-    <form
-      method="POST"
-      action="?/createMixer"
-      use:enhance={() => {
-        return async ({ result, update }) => {
-          if (result.type === 'success') {
-            toast.success('Mixer created')
-            showCreateMixer = false
-            await update({ reset: false })
-            // Auto-select the newly created mixer
-            if (result.data?.mixerId) {
-              mixerProfileId = result.data.mixerId
-            }
-          } else {
-            toast.error('Failed to create mixer')
-            await update({ reset: false })
-          }
-        }
-      }}
-    >
-      <input type="hidden" name="data" value={JSON.stringify(newMixerData)} />
-
-      <div class="space-y-4">
-        <!-- Name + Type -->
-        <div class="flex gap-3">
-          <div class="flex-1">
-            <label for="new-mixer-name" class="mb-1.5 block text-xs font-medium text-muted-foreground">Name</label>
-            <input
-              id="new-mixer-name"
-              type="text"
-              bind:value={newMixerData.name}
-              placeholder="e.g. Caplain Spiral"
-              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            />
-          </div>
-          <div class="w-36">
-            <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Type</span>
-            <SelectRoot
-              type="single"
-              value={newMixerData.type}
-              onValueChange={(v) => onNewMixerTypeChange(v)}
-              items={MIXER_TYPES.map((t) => ({ value: t, label: t }))}
-            >
-              <SelectTrigger>
-                <span>{newMixerData.type}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {#each MIXER_TYPES as t}
-                  <SelectItem value={t} label={t} />
-                {/each}
-              </SelectContent>
-            </SelectRoot>
-          </div>
-        </div>
-
-        <!-- Friction + RPMs -->
-        <div class="flex gap-3">
-          <div class="flex-1">
-            <label for="new-friction" class="mb-1.5 block text-xs font-medium text-muted-foreground">Friction (&deg;C)</label>
-            <input
-              id="new-friction"
-              type="number"
-              step="0.5"
-              min="0"
-              bind:value={newMixerData.friction_factor}
-              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            />
-          </div>
-          <div class="flex-1">
-            <label for="new-rpm1" class="mb-1.5 block text-xs font-medium text-muted-foreground">1st Speed RPM</label>
-            <input
-              id="new-rpm1"
-              type="number"
-              step="1"
-              min="0"
-              bind:value={newMixerData.first_speed_rpm}
-              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            />
-          </div>
-          <div class="flex-1">
-            <label for="new-rpm2" class="mb-1.5 block text-xs font-medium text-muted-foreground">2nd Speed RPM</label>
-            <input
-              id="new-rpm2"
-              type="number"
-              step="1"
-              min="0"
-              bind:value={newMixerData.second_speed_rpm}
-              class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-            />
-          </div>
-        </div>
-
-        <!-- Calibrations -->
-        {#if newMixerData.type !== 'HAND'}
-          <div>
-            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Calibrations (1st speed rounds)
-            </h4>
-            <div class="flex gap-3">
-              {#each newMixerData.calibrations as cal, idx}
-                <div class="flex-1">
-                  <label class="mb-1.5 block text-xs font-medium text-muted-foreground">{cal.mix_type}</label>
-                  <input
-                    type="number"
-                    step="5"
-                    min="0"
-                    bind:value={newMixerData.calibrations[idx].first_speed_rounds}
-                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
-                  />
-                </div>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <!-- Actions -->
-        <div class="flex justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" type="button" onclick={() => (showCreateMixer = false)}>
-            Cancel
-          </Button>
-          <Button size="sm" type="submit" disabled={!newMixerData.name?.trim()}>
-            Create Mixer
-          </Button>
-        </div>
-      </div>
-    </form>
-  </DialogContent>
-</DialogRoot>

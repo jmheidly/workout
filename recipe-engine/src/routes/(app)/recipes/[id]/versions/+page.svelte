@@ -99,6 +99,9 @@
     base_qty: 'Qty',
     category: 'Category',
     sort_order: 'Order',
+    pf_type: 'PF type',
+    pf_ddt: 'PF DDT',
+    pf_fermentation_duration_min: 'PF ferment time',
   }
 
   function formatChangeValue(field, val) {
@@ -151,6 +154,8 @@
     if (field === 'base_qty') return `${val}g`
     if (field === 'category') return val
     if (field.startsWith('preferment_pct_')) return `${((val || 0) * 100).toFixed(1)}%`
+    if (field === 'pf_ddt') return `${val}°C`
+    if (field === 'pf_fermentation_duration_min') return `${val} min`
     return String(val)
   }
 </script>

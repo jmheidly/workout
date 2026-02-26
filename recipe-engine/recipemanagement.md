@@ -112,7 +112,7 @@ Step 3: For each PREFERMENT row, fill in Baker's % for its internal ingredients
         → Final dough quantities update
         → Per-item and batch quantities update
 
-Step 4: (Optional) Enable autolyse, set mixer, configure loss factors
+Step 4: (Optional) Enable autolyse, configure loss factors
 Step 5: (Optional) Add process steps and fermentation schedule
 Step 6: Everything is calculated — ready for production
 ```
@@ -216,10 +216,8 @@ Recipe {
   ddt: number                           // Desired Dough Temperature in °C
   autolyse: boolean
   autolyse_duration_min: number | null  // minutes, if enabled
-
-  // Mixer
-  mixer_profile_id: uuid | null
-  mix_type: string                      // "Improved Mix", "Intensive Mix", "Short Mix"
+  autolyse_overrides: object            // sparse map { ingredient_id: 'autolyse' | 'final' }
+                                        // only stores non-default positions; empty {} = all defaults
 
   // Loss factors
   process_loss_pct: number              // e.g. 0.03 = 3%
@@ -881,6 +879,24 @@ When the baker creates a new pre-ferment, suggest defaults based on type:
 
 These are suggestions only — the baker can change any value.
 
+#### Auto-seeding on Creation
+
+When the baker adds a PREFERMENT ingredient and selects its type, the UI auto-seeds existing recipe ingredients into the pre-ferment breakdown:
+
+1. Scan the recipe for the first ingredient matching each required category:
+   - Yeast-based types (POOLISH, BIGA, PATE_FERMENTEE, SPONGE): FLOUR, LIQUID, LEAVENING
+   - LEVAIN: FLOUR, LIQUID (no leavening — sourdough culture is the PF itself)
+   - CUSTOM: nothing seeded
+2. For each matched ingredient, set its Baker's % for this PF to the default from the table above
+3. When the baker enters the PF's total grams (`base_qty`), distribute grams proportionally:
+   ```
+   total_bp = sum of all Baker's % for this PF
+   grams[i] = (bp[i] / total_bp) × base_qty
+   ```
+   Rounding drift is absorbed by the flour ingredient.
+
+Only existing recipe ingredients are seeded — the system never auto-creates ingredients.
+
 ### 5.4 Pre-ferment Calculation Order
 
 All pre-ferments are independent — they each use their own `base_qty` (K column) as the base value. The engine calculates them in ingredient order.
@@ -987,6 +1003,8 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 
 ## 7. Mixing & Friction System (Rounds-Based)
 
+**Mixer selection is a production-time decision**, not a recipe-level setting. The same recipe may be mixed on different mixers depending on batch size, equipment availability, or baker preference. The baker selects a mixer and mix type on the **Production page** when preparing to mix — the engine then computes friction, water temperature adjustment, and mixing durations for that session. Mixer profiles and mix types are NOT stored on the recipe.
+
 ### 7.1 Friction Factor Defaults by Mixer Type
 
 | Mixer Type | Friction (°C) | 1st RPM | 2nd RPM | Notes |
@@ -1070,30 +1088,47 @@ Flour and water are mixed first and rested before adding other ingredients.
 
 ### 8.2 What Goes Into Autolyse
 
+**Defaults:** FLOUR and LIQUID go into autolyse; everything else goes into the final mix. PREFERMENT ingredients are excluded from both lists (they are added as a whole mass, not split).
+
+**Overrides:** The baker can drag ingredients between the Autolyse Mix and Final Mix lists in the UI. Overrides are stored as a sparse map on the recipe (`autolyse_overrides`). Only non-default positions are stored — moving an ingredient back to its default list deletes the override entry. This means an empty `{}` = all engine defaults.
+
+**Precedence rules:**
+1. PREFERMENT → skip (never in either list, even if overridden)
+2. `overrides[ing.id] === 'autolyse'` → autolyse list
+3. `overrides[ing.id] === 'final'` → final mix list
+4. `ing.category === FLOUR or LIQUID` → autolyse list (engine default)
+5. else → final mix list (engine default)
+
 ```python
-def calc_autolyse_split(recipe, all_ingredients, all_preferments):
+def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
     if not recipe.autolyse:
         return None
 
-    autolyse = {}
-    remaining = {}
+    autolyse = []
+    remaining = []
 
     for ing in all_ingredients:
         fdq = calc_final_dough_qty_v2(ing, all_ingredients, all_preferments)
         if fdq <= 0:
             continue
+        if ing.category == PREFERMENT:
+            continue
 
-        if ing.category == FLOUR:
-            autolyse[ing.name] = fdq        # all flour goes into autolyse
-        elif ing.category == LIQUID:
-            autolyse[ing.name] = fdq        # all water goes into autolyse
+        item = { "id": ing.id, "name": ing.name, "qty": fdq }
+
+        if overrides.get(ing.id) == 'autolyse':
+            autolyse.append(item)
+        elif overrides.get(ing.id) == 'final':
+            remaining.append(item)
+        elif ing.category in (FLOUR, LIQUID):
+            autolyse.append(item)
         else:
-            remaining[ing.name] = fdq       # everything else waits
+            remaining.append(item)
 
     return {
-        "autolyse_ingredients": autolyse,
+        "autolyse_ingredients": autolyse,           # array of { id, name, qty }
         "autolyse_duration_min": recipe.autolyse_duration_min or 20,
-        "final_mix_ingredients": remaining,
+        "final_mix_ingredients": remaining,          # array of { id, name, qty }
     }
 ```
 
@@ -1330,9 +1365,23 @@ def diff_versions(version_a, version_b):
                     "old": old_val, "new": new_val,
                 })
 
+        # Compare pre-ferment settings (type, DDT, fermentation duration)
+        a_ps = getattr(ing_a, "preferment_settings", None)
+        b_ps = getattr(ing_b, "preferment_settings", None)
+        if a_ps or b_ps:
+            for field in ["type", "ddt", "fermentation_duration_min"]:
+                old_val = getattr(a_ps, field, None) if a_ps else None
+                new_val = getattr(b_ps, field, None) if b_ps else None
+                if old_val != new_val:
+                    changes.append({
+                        "type": "modified", "ingredient_id": uid,
+                        "name": ing_b.name, "field": f"pf_{field}",
+                        "old": old_val, "new": new_val,
+                    })
+
     # Global params
     for field in ["yield_per_piece", "ddt", "autolyse", "autolyse_duration_min",
-                   "process_loss_pct", "bake_loss_pct", "mix_type", "mixer_profile_id"]:
+                   "autolyse_overrides", "process_loss_pct", "bake_loss_pct"]:
         old_val = getattr(a, field, None)
         new_val = getattr(b, field, None)
         if old_val != new_val:
@@ -1349,6 +1398,17 @@ def diff_versions(version_a, version_b):
 - Renaming an ingredient does NOT change its UUID
 - Diff detects renames as a distinct change type ("renamed"), not remove + add
 - Pre-ferment Baker's % changes tracked per-ingredient per-pre-ferment
+- Pre-ferment settings (type, DDT, fermentation duration) tracked per-ingredient with `pf_` prefix
+- `autolyse_overrides` compared via deep equality (JSON.stringify), not reference equality
+
+### 12.3 Version History Pagination
+
+Version lists are paginated server-side using SQLite `LIMIT ? OFFSET ?`:
+
+- **Page size:** 10 versions per page
+- **URL-driven:** `?page=N` query parameter (default: 1)
+- **Change summaries:** Computed per-page; the oldest item on each page diffs against the next older version (fetched separately)
+- **Current version:** Only displayed on page 1 (it lives above the version list)
 
 ---
 
@@ -1382,7 +1442,7 @@ Quick-reference: every output the engine produces.
 - **K** — ingredient quantities in grams (final dough amounts)
 - **Category** — per ingredient (set once)
 - **Pre-ferment Baker's %** — per ingredient per pre-ferment (only when PREFERMENT rows exist)
-- **Recipe settings** — yield per piece, DDT, autolyse, loss factors, mixer profile
+- **Recipe settings** — yield per piece, DDT, autolyse (with optional overrides), loss factors
 
 ---
 
@@ -1396,7 +1456,6 @@ Quick-reference: every output the engine produces.
   "yield_per_piece": 80,
   "ddt": 24,
   "autolyse": false,
-  "mix_type": "Improved Mix",
   "process_loss_pct": 0.03,
   "bake_loss_pct": 0.12,
   "ingredients": [
@@ -1443,7 +1502,6 @@ Quick-reference: every output the engine produces.
   "ddt": 24,
   "autolyse": true,
   "autolyse_duration_min": 20,
-  "mix_type": "Short Mix",
   "process_loss_pct": 0.02,
   "bake_loss_pct": 0.15,
   "ingredients": [
@@ -1477,7 +1535,6 @@ Quick-reference: every output the engine produces.
   "ddt": 24,
   "autolyse": true,
   "autolyse_duration_min": 30,
-  "mix_type": "Short Mix",
   "process_loss_pct": 0.02,
   "bake_loss_pct": 0.16,
   "ingredients": [
@@ -1510,7 +1567,6 @@ Quick-reference: every output the engine produces.
   "yield_per_piece": 60,
   "ddt": 22,
   "autolyse": false,
-  "mix_type": "Intensive Mix",
   "process_loss_pct": 0.03,
   "bake_loss_pct": 0.10,
   "ingredients": [

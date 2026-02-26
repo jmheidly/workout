@@ -127,6 +127,26 @@ export function diffVersions(snapshotA, snapshotB) {
         })
       }
     }
+
+    // Preferment settings changes (type, DDT, fermentation duration)
+    const aPs = a.preferment_settings || null
+    const bPs = b.preferment_settings || null
+    if (aPs || bPs) {
+      for (const field of ['type', 'ddt', 'fermentation_duration_min']) {
+        const oldVal = aPs?.[field] ?? null
+        const newVal = bPs?.[field] ?? null
+        if (oldVal !== newVal) {
+          changes.push({
+            type: 'ingredient_modified',
+            ingredient_id: id,
+            name: b.name,
+            field: `pf_${field}`,
+            old: oldVal,
+            new: newVal,
+          })
+        }
+      }
+    }
   }
 
   // ── Process step changes (UUID-matched) ────────────────────
@@ -236,6 +256,20 @@ export function summarizeChanges(changes) {
   const qtyChanges = modified.filter((c) => c.field === 'base_qty')
   if (qtyChanges.length) {
     parts.push(qtyChanges.map((c) => `${c.name}: ${c.old}g → ${c.new}g`).join(', '))
+  }
+
+  // Preferment settings changes
+  const pfTypeChanges = modified.filter((c) => c.field === 'pf_type')
+  if (pfTypeChanges.length) {
+    parts.push(pfTypeChanges.map((c) => `${c.name} type: ${c.old} → ${c.new}`).join(', '))
+  }
+  const pfDdtChanges = modified.filter((c) => c.field === 'pf_ddt')
+  if (pfDdtChanges.length) {
+    parts.push(pfDdtChanges.map((c) => `${c.name} DDT: ${c.old ?? 'inherit'}°C → ${c.new ?? 'inherit'}°C`).join(', '))
+  }
+  const pfFermChanges = modified.filter((c) => c.field === 'pf_fermentation_duration_min')
+  if (pfFermChanges.length) {
+    parts.push(pfFermChanges.map((c) => `${c.name} ferment: ${c.old ?? 'default'} → ${c.new ?? 'default'}min`).join(', '))
   }
 
   // Step changes

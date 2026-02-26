@@ -7,7 +7,7 @@
     getEffectiveDdt,
     formatDuration,
   } from '$lib/preferment-defaults.js'
-  import { MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { MIX_TYPE_NAMES, MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -16,22 +16,43 @@
     CardContent,
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
+  import {
+    SelectRoot,
+    SelectTrigger,
+    SelectContent,
+    SelectItem,
+  } from '$lib/components/ui/select/index.js'
+  import MixerPicker from '$lib/components/mixer-picker.svelte'
 
   let { data } = $props()
+
+  // ── Mixer Selection (session-only, not saved to recipe) ──
+
+  let mixerProfileId = $state('')
+  let mixType = $state('Improved Mix')
+
+  let selectedMixer = $derived(
+    mixerProfileId
+      ? (data.mixerProfiles || []).find((m) => m.id === mixerProfileId) || null
+      : null
+  )
+
+  let computedFriction = $derived(
+    selectedMixer ? effectiveFriction(selectedMixer.friction_factor, mixType) : null
+  )
 
   // ── Environment Inputs ─────────────────────────────────
 
   let roomTemp = $state(22)
   let flourTemp = $state(20)
+  let frictionFactor = $state(12)
 
-  // Compute default friction from mixer profile if available
-  const mixerProfile = data.mixerProfile
-  const mixType = data.recipe.mix_type || 'Improved Mix'
-  const computedFriction = mixerProfile
-    ? effectiveFriction(mixerProfile.friction_factor, mixType)
-    : null
-
-  let frictionFactor = $state(computedFriction ?? 12)
+  // Sync friction when mixer selection changes
+  $effect(() => {
+    if (computedFriction != null) {
+      frictionFactor = computedFriction
+    }
+  })
 
   // Default: tomorrow 6 AM
   function defaultMixTime() {
@@ -46,8 +67,8 @@
   // ── Mixing Timer ─────────────────────────────────────────
 
   let mixingDurations = $derived.by(() => {
-    if (!mixerProfile) return null
-    return calcMixDurations(mixerProfile, mixType)
+    if (!selectedMixer) return null
+    return calcMixDurations(selectedMixer, mixType)
   })
 
   // ── Enabled Preferments ────────────────────────────────
@@ -153,8 +174,8 @@
       Recipe
     </Button>
     <h1 class="text-lg font-semibold">{data.recipe.name} — Production</h1>
-    {#if mixerProfile}
-      <Badge variant="secondary" class="font-normal">{mixerProfile.name}</Badge>
+    {#if selectedMixer}
+      <Badge variant="secondary" class="font-normal">{selectedMixer.name}</Badge>
       <Badge variant="outline" class="font-normal">{mixType}</Badge>
     {/if}
   </div>
@@ -173,6 +194,23 @@
     </CardHeader>
     <CardContent>
       <div class="flex flex-wrap items-start gap-4">
+        <div class="w-48">
+          <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Mixer</label>
+          <MixerPicker mixerProfiles={data.mixerProfiles || []} bind:value={mixerProfileId} onCreateNew={() => {}} />
+        </div>
+        {#if selectedMixer}
+          <div class="w-40">
+            <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Mix Type</label>
+            <SelectRoot type="single" value={mixType} onValueChange={(v) => { mixType = v }}>
+              <SelectTrigger class="w-full">{mixType}</SelectTrigger>
+              <SelectContent>
+                {#each MIX_TYPE_NAMES as name}
+                  <SelectItem value={name}>{name}</SelectItem>
+                {/each}
+              </SelectContent>
+            </SelectRoot>
+          </div>
+        {/if}
         <div class="w-28">
           <label for="room-temp" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Room Temp (&deg;C)</label>
           <input
@@ -204,7 +242,7 @@
           />
           {#if computedFriction != null}
             <span class="mt-1 block text-[10px] text-muted-foreground">
-              Computed: {computedFriction.toFixed(1)}&deg;C ({mixerProfile.name})
+              Computed: {computedFriction.toFixed(1)}&deg;C ({selectedMixer.name})
             </span>
           {:else}
             <span class="mt-1 block text-[10px] text-muted-foreground">Manual — no mixer assigned</span>
@@ -344,7 +382,7 @@
               <span class="text-xs font-medium text-muted-foreground">1st Speed</span>
               <div class="font-medium tabular-nums">
                 {formatMin(mixingDurations.first_speed_min)}
-                <span class="text-xs text-muted-foreground">({mixerProfile.first_speed_rpm} RPM)</span>
+                <span class="text-xs text-muted-foreground">({selectedMixer.first_speed_rpm} RPM)</span>
               </div>
             </div>
             {#if MIX_TYPES[mixType]?.has_second}
@@ -352,7 +390,7 @@
                 <span class="text-xs font-medium text-muted-foreground">2nd Speed</span>
                 <div class="font-medium tabular-nums">
                   {formatMin(mixingDurations.second_speed_min)}
-                  <span class="text-xs text-muted-foreground">({mixerProfile.second_speed_rpm} RPM)</span>
+                  <span class="text-xs text-muted-foreground">({selectedMixer.second_speed_rpm} RPM)</span>
                 </div>
               </div>
             {:else}

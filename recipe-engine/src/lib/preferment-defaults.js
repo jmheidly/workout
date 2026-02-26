@@ -7,10 +7,10 @@
  * FLOUR is always 1.0 (100%) as the base.
  */
 export const PF_SEED_BAKERS_PCT = {
-  POOLISH:        { FLOUR: 1.0, LIQUID: 1.0,  LEAVENING: 0.005 },
-  BIGA:           { FLOUR: 1.0, LIQUID: 0.6,  LEAVENING: 0.005 },
+  POOLISH:        { FLOUR: 1.0, LIQUID: 1.0,  LEAVENING: 0.001 },
+  BIGA:           { FLOUR: 1.0, LIQUID: 0.55, LEAVENING: 0.001 },
   LEVAIN:         { FLOUR: 1.0, LIQUID: 1.0 },
-  PATE_FERMENTEE: { FLOUR: 1.0, LIQUID: 0.65, LEAVENING: 0.005 },
+  PATE_FERMENTEE: { FLOUR: 1.0, LIQUID: 0.6,  LEAVENING: 0.001 },
   SPONGE:         { FLOUR: 1.0, LIQUID: 0.6,  LEAVENING: 0.01 },
   CUSTOM:         {},
 }
