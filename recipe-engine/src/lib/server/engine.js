@@ -1,4 +1,5 @@
 import { safeDivide } from '$lib/utils.js'
+import { MIXING_PHASES, classifyAllIngredients } from '$lib/mixing-phases.js'
 
 /**
  * @typedef {Object} Ingredient
@@ -371,8 +372,9 @@ function calcAdjustedYield(desired, processLoss, bakeLoss) {
 
 /**
  * Split final dough ingredients into autolyse and final-mix groups.
- * Default: FLOUR + LIQUID → autolyse, everything else → final mix.
- * Overrides allow bakers to drag ingredients between lists.
+ * Defaults: FLOUR + LIQUID → autolyse; liquid PFs (Poolish, Levain) → autolyse;
+ * stiff PFs (Biga, PFD, Sponge) → final mix; everything else → final mix.
+ * Overrides allow bakers to drag any ingredient between lists.
  *
  * @param {Ingredient[]} ingredients
  * @param {Object.<string, number>} finalDoughQtys
@@ -381,6 +383,7 @@ function calcAdjustedYield(desired, processLoss, bakeLoss) {
  * @returns {{ autolyse_ingredients: Array<{id: string, name: string, qty: number}>, final_mix_ingredients: Array<{id: string, name: string, qty: number}>, autolyse_duration_min: number }}
  */
 function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides = {}) {
+  const { phases: phaseMap } = classifyAllIngredients(ingredients)
   const autolyseIngredients = []
   const finalMixIngredients = []
 
@@ -388,8 +391,9 @@ function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides =
     const fdq = finalDoughQtys[ing.id]
     if (!fdq || fdq <= 0) continue
 
-    // Preferments are never in either list
-    if (ing.category === 'PREFERMENT') continue
+    // Skip ingredients not classified (disabled PFs, zero-qty)
+    const phase = phaseMap.get(ing.id)
+    if (phase == null) continue
 
     const item = { id: ing.id, name: ing.name, qty: fdq }
 
@@ -397,7 +401,7 @@ function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides =
       autolyseIngredients.push(item)
     } else if (overrides[ing.id] === 'final') {
       finalMixIngredients.push(item)
-    } else if (ing.category === 'FLOUR' || ing.category === 'LIQUID') {
+    } else if (phase === MIXING_PHASES.AUTOLYSE) {
       autolyseIngredients.push(item)
     } else {
       finalMixIngredients.push(item)
@@ -407,6 +411,6 @@ function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides =
   return {
     autolyse_ingredients: autolyseIngredients,
     final_mix_ingredients: finalMixIngredients,
-    autolyse_duration_min: durationMin
+    autolyse_duration_min: durationMin,
   }
 }

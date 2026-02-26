@@ -331,7 +331,7 @@ MixerProfile {
   id: uuid
   user_id: uuid
   name: string                          // "Caplain", "Haussler", "Bhk"
-  type: enum                            // SPIRAL, PLANETARY, FORK, HAND
+  type: enum                            // SPIRAL, PLANETARY, OBLIQUE, FORK, HAND
   friction_factor: number               // base °C added during mixing
   first_speed_rpm: number               // 1st speed RPM
   second_speed_rpm: number              // 2nd speed RPM
@@ -1010,9 +1010,12 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 | Mixer Type | Friction (°C) | 1st RPM | 2nd RPM | Notes |
 |-----------|--------------|---------|---------|-------|
 | SPIRAL | 14 | 105 | 204 | Most common bakery mixer |
-| PLANETARY | 8 | 80 | 160 | KitchenAid-style |
+| OBLIQUE | 8 | 40 | 80 | Gentle action, long mix times |
+| PLANETARY | 8 | 80 | 160 | Varies widely by model/size (see note) |
 | FORK | 5 | 40 | 80 | Low-speed, gentle |
 | HAND | 2 | 0 | 0 | No timer computation |
+
+**Note on planetary mixers:** RPMs vary significantly by model and bowl size. A 20-qt Hobart runs ~107/198 RPM while a 60-qt runs ~70/124 RPM. The defaults above are mid-range starting points — bakers should check their mixer's technical manual and enter actual RPMs.
 
 ### 7.2 Mix Types, Target Rounds & Friction Multipliers
 
@@ -1026,6 +1029,28 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 ```javascript
 effective_friction = friction_factor × friction_mult
 ```
+
+### 7.2.1 Mix Type Characteristics (Reference)
+
+Each mix type produces different bread characteristics due to the interplay between gluten development, oxidation, and fermentation time. This table summarizes the textbook guidelines for a standard lean dough:
+
+| Characteristic | Short Mix | Improved Mix | Intensive Mix |
+|---------------|-----------|-------------|--------------|
+| Gluten development | Underdeveloped | Partial | Full |
+| Typical hydration | 70% | 67% | 65% |
+| Typical yeast (fresh) | 0.5% | 1.5% | 2.0% |
+| 1st fermentation | 3.5 hours | 1.5 hours | 20 minutes |
+| Folds during bulk | 3 | 0–1 | 0 |
+| Final proof | 45–60 min | 60–90 min | 90–120 min |
+| Crumb color | Cream (carotenoids preserved) | Light cream | White (oxidized) |
+| Flavor | Complex (long fermentation) | Good | Mild (limited fermentation) |
+| Shelf life | Best (acidity development) | Good | Shortest |
+
+Notes:
+- Higher hydration in Short/Improved compensates for the extensibility needed during folds.
+- Lower yeast in Short Mix prevents over-fermentation during the long bulk.
+- Water temperature decreases from Short → Intensive to compensate for increasing mixing friction.
+- These are guidelines for lean dough. Enriched dough (brioche, panettone) follows different rules.
 
 ### 7.3 Rounds-Based Mixing Timer
 
@@ -1051,6 +1076,28 @@ Each mixer profile stores calibrated **1st-speed rounds** per mix type. The engi
 | Improved Mix | 420 | 4.0 | 1000 | 4.9 | 8.9 |
 | Intensive Mix | 525 | 5.0 | 1600 | 7.8 | 12.8 |
 | Short Improved | 525 | 5.0 | 400 | 2.0 | 7.0 |
+
+#### 7.3.1 Clarification — Incorporation vs. Development
+
+The target rounds (600, 1000, 1600) represent gluten development only. Every mix also requires a separate incorporation phase in 1st speed where ingredients are hydrated and gluten begins to form. This incorporation phase is what the calibrated `first_speed_rounds` per mix type represents.
+
+The textbook standard for incorporation is 4–5 minutes at 1st speed (roughly 400–500 rounds on a spiral at 100 RPM). Our per-mixer calibrations capture this precisely — e.g., the Caplain uses 420 rounds (4.0 min) for Improved Mix incorporation and 525 rounds (5.0 min) for Intensive Mix.
+
+**Verification against textbook (Suas, Ch. 3) — spiral mixer at 100/200 RPM:**
+
+| Mix Type | Textbook | Our Formula | Match |
+|----------|---------|------------|-------|
+| Short Mix | 4–5 min incorp + 6 min dev = 10–11 min (all 1st) | (450+600)/100 = 10.5 min | ✓ |
+| Improved | 4–5 min incorp (1st) + 1000/200 = 5 min (2nd) | 450/100=4.5 + 1000/200=5.0 | ✓ |
+| Intensive | 4–5 min incorp (1st) + 1600/200 = 8 min (2nd) | 500/100=5.0 + 1600/200=8.0 | ✓ |
+
+**Cross-mixer verification — oblique at 40/80 RPM:**
+
+| Mix Type | Textbook | Computed | Match |
+|----------|---------|---------|-------|
+| Short Mix | 4–5 min incorp + 600/40 = 15 min dev = 19–20 min (all 1st) | (180+600)/40 = 19.5 min | ✓ |
+| Improved | 4–5 min incorp (1st) + 1000/80 = 12.5 min (2nd) | 180/40=4.5 + 1000/80=12.5 | ✓ |
+| Intensive | 4–5 min incorp (1st) + 1600/80 = 20 min (2nd) | 180/40=4.5 + 1600/80=20.0 | ✓ |
 
 ### 7.4 Calibration Over Time
 
@@ -1078,28 +1125,44 @@ Compare with the mixer profile's `friction_factor × friction_mult` — track dr
 | Haussler | SPIRAL | 14 | 130 | 180 | 455 | 455 | 520 |
 | Bhk | SPIRAL | 10 | 150 | 300 | 420 | 450 | 525 |
 
+### 7.8 Double Hydration Technique
+
+For super-hydrated doughs (ciabatta, pugliese, francese — typically >80% hydration), water can be incorporated in two phases:
+
+1. **Phase 1:** Add enough water at the start to make a medium-soft dough (~65–68% hydration). Mix normally through 1st speed incorporation.
+2. **Development:** Develop gluten to approximately two-thirds of target development in 2nd speed.
+3. **Phase 2:** With the mixer running in 1st speed, slowly add the remaining water in small additions until fully absorbed.
+
+This technique produces very soft dough with sufficient strength for machine handling. It is not currently modeled in the engine's mixing timer — the baker manages it through process steps (§10). A future enhancement could add a `double_hydration` flag to the recipe that splits the LIQUID quantities into two phases and adjusts the mixing timer accordingly.
+
 ---
 
 ## 8. Autolyse System
 
 ### 8.1 When Enabled
 
-Flour and water are mixed first and rested before adding other ingredients.
+Autolyse is a technique developed by Professor Raymond Calvel in which flour and water are mixed briefly and rested before adding other ingredients. During the rest, flour proteins hydrate more fully (improving gluten structure) and protease enzymes naturally present in the flour degrade some gluten bonds, making the dough more extensible and easier to work. A minimum of 15–20 minutes is required for enzyme activation; rests can extend to 60 minutes for bulk dough.
+
+Salt and yeast are excluded from the autolyse by default because both counter its effects: salt slows protease activity, while yeast-driven fermentation creates acidity that increases dough strength and reduces extensibility.
 
 ### 8.2 What Goes Into Autolyse
 
-**Defaults:** FLOUR and LIQUID go into autolyse; everything else goes into the final mix. PREFERMENT ingredients are excluded from both lists (they are added as a whole mass, not split).
+**Defaults:** FLOUR and LIQUID go into autolyse. Enabled PREFERMENT ingredients are initially classified by consistency: liquid PFs (Poolish, Levain) default to autolyse, stiff PFs (Biga, Pâte Fermentée, Sponge, Custom) default to final mix. A post-pass then refines liquid PF placement — Poolish uses a water-ratio threshold, Levain uses the sourdough decision matrix (§8.4). Everything else goes into the final mix. Disabled preferments are excluded entirely.
 
-**Overrides:** The baker can drag ingredients between the Autolyse Mix and Final Mix lists in the UI. Overrides are stored as a sparse map on the recipe (`autolyse_overrides`). Only non-default positions are stored — moving an ingredient back to its default list deletes the override entry. This means an empty `{}` = all engine defaults.
+**Overrides:** The baker can drag any ingredient — including preferments — between the Autolyse Mix and Final Mix lists in the UI. Overrides are stored as a sparse map on the recipe (`autolyse_overrides`). Only non-default positions are stored — moving an ingredient back to its default list deletes the override entry. This means an empty `{}` = all engine defaults.
 
 **Precedence rules:**
-1. PREFERMENT → skip (never in either list, even if overridden)
+1. PREFERMENT with `enabled !== true` → skip (not active)
 2. `overrides[ing.id] === 'autolyse'` → autolyse list
 3. `overrides[ing.id] === 'final'` → final mix list
 4. `ing.category === FLOUR or LIQUID` → autolyse list (engine default)
-5. else → final mix list (engine default)
+5. `ing.category === PREFERMENT` and liquid type (POOLISH, LEVAIN) → autolyse list (engine default)
+6. `ing.category === PREFERMENT` and stiff type (BIGA, PATE_FERMENTEE, SPONGE, CUSTOM) → final mix list (engine default)
+7. else → final mix list (engine default)
 
 ```python
+LIQUID_PF_TYPES = {'POOLISH', 'LEVAIN'}
+
 def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
     if not recipe.autolyse:
         return None
@@ -1111,8 +1174,11 @@ def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
         fdq = calc_final_dough_qty_v2(ing, all_ingredients, all_preferments)
         if fdq <= 0:
             continue
+
+        # Skip disabled preferments
         if ing.category == PREFERMENT:
-            continue
+            if not ing.preferment_settings.get('enabled'):
+                continue
 
         item = { "id": ing.id, "name": ing.name, "qty": fdq }
 
@@ -1122,6 +1188,12 @@ def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
             remaining.append(item)
         elif ing.category in (FLOUR, LIQUID):
             autolyse.append(item)
+        elif ing.category == PREFERMENT:
+            # §8.4: liquid PFs → autolyse, stiff PFs → final mix
+            if ing.preferment_settings.get('type') in LIQUID_PF_TYPES:
+                autolyse.append(item)
+            else:
+                remaining.append(item)
         else:
             remaining.append(item)
 
@@ -1134,11 +1206,72 @@ def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
 
 ### 8.3 Impact on Process Steps
 
-When autolyse is enabled, the engine auto-inserts process steps:
+When autolyse is enabled, the engine auto-inserts process steps. The stage and labels depend on whether a preferment ends up in the autolyse group (see §8.5 Fermentolyse):
 
-1. **Autolyse Mix** — flour + water, 1st speed, until just combined
-2. **Autolyse Rest** — cover, rest for `autolyse_duration_min`
-3. **Final Mix** — add all remaining ingredients, proceed normally
+**Pure autolyse** (no preferment in autolyse group):
+1. **Autolyse Mix** (stage: `AUTOLYSE`) — flour, water, 1st speed, until just combined
+2. **Autolyse Rest** (stage: `AUTOLYSE`) — cover, rest for `autolyse_duration_min`
+3. **Final Mix** (stage: `MIXING`) — add salt, yeast, preferments, and all remaining ingredients
+
+**Fermentolyse** (a preferment is in the autolyse group):
+1. **Fermentolyse Mix** (stage: `FERMENTOLYSE`) — flour, water, and levain/poolish, 1st speed, until just combined
+2. **Fermentolyse Rest** (stage: `FERMENTOLYSE`) — cover and rest; fermentation begins during rest
+3. **Final Mix** (stage: `MIXING`) — add remaining ingredients
+
+The baker can customize these steps via the Process Steps editor (§10). The auto-generated steps serve as a starting template based on the textbook-standard sequence.
+
+### 8.4 Preferment Handling During Autolyse
+
+The autolyse split (§8.2) includes enabled preferments in the ingredient lists. After initial per-ingredient classification places all liquid PFs (Poolish, Levain) into AUTOLYSE, a post-pass refines the placement based on PF type:
+
+**Stiff PFs** (Biga, Pâte Fermentée, Sponge, Custom) are classified as INCORPORATION in the initial pass (rule 9) — no post-pass needed.
+
+**Poolish:** Uses a water-ratio threshold. If the poolish contributes < 15% of total formula water, it is demoted to INCORPORATION (too little hydration benefit to justify inclusion). Otherwise it stays in AUTOLYSE.
+
+**Levain — Sourdough Decision Matrix:** Levain classification depends on inoculation %, levain hydration, flour composition, and total dough hydration — not just water contribution. A large levain (30% inoculation) is structurally part of the dough and should be mixed in early (fermentolyse). A small levain (10%) should be added after the rest (pure autolyse). Stiff levains concentrate acidity and tighten gluten — always excluded.
+
+The matrix evaluates in order (first match wins):
+
+| # | Condition | Result | Rationale |
+|---|-----------|--------|-----------|
+| 0 | No BP data (totalPfBp = 0) | keep AUTOLYSE | No data to evaluate — keep default |
+| 1 | Levain hydration < 65% | INCORPORATION | Stiff levain — concentrated acidity, tightens gluten |
+| 2 | Whole wheat > 40% of total flour | INCORPORATION | WW benefits from clean enzyme activation without acid |
+| 3 | Inoculation >= 25% | AUTOLYSE (fermentolyse) | Levain IS the dough structure |
+| 4 | Inoculation < 15% AND waterRatio < 20% | INCORPORATION | Low inoculation + low water — clean autolyse preferred |
+| 5 | Inoculation 15–25% AND total hydration >= 75% | AUTOLYSE (fermentolyse) | High hydration gray zone — extensible dough benefits |
+| 6 | Inoculation 15–25% AND total hydration < 75% | INCORPORATION | Low hydration gray zone — exclude levain |
+| 7 | Fallback | AUTOLYSE | Shouldn't reach here |
+
+Metrics used by the matrix:
+- **inoculationPct** = PF flour / total formula flour
+- **hydration** = PF water / PF flour (null if flour = 0)
+- **waterRatio** = PF water / total formula water
+- **wholeWheatPct** = whole wheat flour / total flour (name heuristic: `/\bwhole\s*wheat\b|\bWW\b|\bwheatmeal\b/i`)
+
+When a levain stays in AUTOLYSE (rules 3, 5), the mixing steps use the FERMENTOLYSE stage instead of AUTOLYSE (see §8.5).
+
+**Rye autolyse warning:** When rye flour exceeds 30% of total flour and there are ingredients classified as AUTOLYSE, the engine emits a warning: *"Rye flour is >30% of total flour. Autolyse is typically not beneficial for high-rye doughs — rye lacks the gluten proteins that autolyse develops. Consider disabling autolyse."* Displayed as an amber banner on the autolyse split card.
+
+The baker can override any decision by dragging PFs between lists, just like any other ingredient. The override system (§8.2) applies uniformly.
+
+**Edge case — instant dry yeast:** Unlike fresh or active dry yeast, instant dry yeast has low cell moisture and benefits from early hydration. The baker can drag it into the Autolyse list via the override system (§8.2). The engine default remains LEAVENING → final mix, since most bakeries use fresh yeast.
+
+### 8.5 Fermentolyse
+
+When autolyse is enabled and a PREFERMENT ingredient ends up in the AUTOLYSE group (via the sourdough matrix or baker override), the technique is more accurately called **fermentolyse** — flour, water, and levain are combined and rested together, allowing fermentation to begin during the rest period alongside the enzymatic activity of a traditional autolyse.
+
+The engine detects this automatically:
+```
+isFermentolyse = autolyseGroup.some(i => i.category === 'PREFERMENT')
+```
+
+When fermentolyse is detected:
+- **Stage:** `FERMENTOLYSE` (not `AUTOLYSE`)
+- **Step titles:** "Fermentolyse Mix" / "Fermentolyse Rest" (not "Autolyse Mix" / "Autolyse Rest")
+- **Rest description:** "Cover and rest. Fermentation begins during rest — enzymatic activity and early acid development occur simultaneously."
+
+When no preferment is in the autolyse group (pure autolyse), the existing AUTOLYSE stage and labels are used unchanged.
 
 ---
 
@@ -1205,6 +1338,35 @@ ProcessStep(
 ```
 
 No hard-coded steps — each recipe defines its own sequence. Seed recipes (§14) provide templates.
+
+### 10.2 Ingredient Incorporation Order (Reference)
+
+When the engine auto-generates mixing process steps for a recipe, it should respect the standard incorporation timing based on ingredient category and Baker's percentage. These rules come from baking science — adding ingredients at the wrong stage can impair gluten development.
+
+**Incorporation timing by category:**
+
+| Category | When to Add | Condition / Notes |
+|----------|-----------|------------------|
+| FLOUR | Beginning (1st speed) | Always first, with water |
+| LIQUID | Beginning (1st speed) | Hydrates flour proteins and starch |
+| LEAVENING | Beginning (1st speed) | With flour + water (exception: instant dry yeast can go in before autolyse) |
+| SEASONING (salt) | Beginning (1st speed) | Can go in with flour + water despite common myths; or after autolyse if enabled |
+| ENRICHMENT (low fat, ≤4% BP) | Beginning (1st speed) | Small amounts don't impair gluten formation |
+| ENRICHMENT (med fat, 5–15% BP) | Halfway through 2nd speed | Fat lubricates protein chains, delaying gluten bonding |
+| ENRICHMENT (high fat, >15% BP) | Near end of 2nd speed | Requires near-full gluten development to support the fat load |
+| ENRICHMENT (liquid fat/oil) | Beginning (1st speed) | Part of hydration; large amounts can go after full development in 1st speed |
+| ENRICHMENT (eggs) | Beginning (1st speed) | Major hydration role; always include ≥10% water alongside eggs |
+| SWEETENER (≤12% BP) | Beginning (1st speed) | Low sugar doesn't disrupt gluten |
+| SWEETENER (>12% BP) | In stages, or after development | Sugar is hygroscopic — large amounts steal water from proteins |
+| FLAVORING (dry powders) | Beginning (1st speed) | Malt powder, milk powder, etc. — with flour |
+| MIXIN (nuts, fruit, chocolate) | End of mix, 1st speed ONLY | After full gluten development; 2nd speed would shred gluten bonds |
+| PREFERMENT (liquid — Poolish) | Autolyse (if water ratio >= 15%) or final mix | Water-ratio threshold: large poolish aids hydration, small poolish doesn't justify inclusion |
+| PREFERMENT (liquid — Levain) | Autolyse or final mix (sourdough matrix §8.4) | Depends on inoculation %, levain hydration, flour composition, and total dough hydration |
+| PREFERMENT (stiff) | After autolyse / beginning of final mix | Biga, PFD, Sponge — higher yeast concentration would initiate fermentation |
+
+**Current implementation:** The engine auto-generates multi-phase mixing steps via `suggestMixingSteps()` in `process-steps.js`. It classifies all ingredients into four phases — AUTOLYSE, INCORPORATION, FAT_ADDITION, MIXIN — using `classifyAllIngredients()` in `mixing-phases.js`. For liquid preferments, a post-pass refines classification: Poolish uses a water-ratio threshold, Levain uses the sourdough decision matrix (§8.4). When autolyse is enabled and a preferment ends up in the autolyse group, the engine uses the FERMENTOLYSE stage (§8.5). The baker can further customize via the Process Steps editor or drag overrides.
+
+**Available process stages:** `PREFERMENT_BUILD`, `AUTOLYSE`, `FERMENTOLYSE`, `MIXING`, `BULK_FERMENT`, `FOLD`, `DIVIDE`, `PRESHAPE`, `REST`, `SHAPE`, `PROOF`, `RETARD`, `BAKE`, `COOL`, `FINISH`.
 
 ---
 

@@ -2,7 +2,8 @@
   import { enhance } from '$app/forms'
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
-  import { PROCESS_STAGES, suggestAutolyseSteps } from '$lib/process-steps.js'
+  import { PROCESS_STAGES, suggestMixingSteps } from '$lib/process-steps.js'
+  import { MIXING_PHASES, classifyAllIngredients } from '$lib/mixing-phases.js'
   import { FERMENTATION_DEFAULTS, PF_SEED_BAKERS_PCT, formatDuration } from '$lib/preferment-defaults.js'
   import { COMMON_INGREDIENTS } from '$lib/common-ingredients.js'
   import { useSortable, reorder } from '$lib/use-sortable.svelte.js'
@@ -103,6 +104,13 @@
   let autolyse = $state(!!data.recipe.autolyse)
   let autolyseDurationMin = $state(data.recipe.autolyse_duration_min || 20)
   let autolyseOverrides = $state(data.recipe.autolyse_overrides || {})
+
+  // Autolyse warnings — reactive, recomputed when ingredients change
+  let autolyseWarnings = $derived.by(() => {
+    if (!autolyse || ingredients.length === 0) return []
+    const { warnings } = classifyAllIngredients(ingredients)
+    return warnings
+  })
 
   // Ingredient Library (autocomplete)
   let ingredientLibrary = $state(data.ingredientLibrary || [])
@@ -639,7 +647,11 @@
   }
 
   function suggestSteps() {
-    const steps = suggestAutolyseSteps(autolyseDurationMin)
+    const steps = suggestMixingSteps({
+      ingredients,
+      hasAutolyse: autolyse,
+      autolyseDurationMin,
+    })
     for (const s of steps) {
       processSteps.push({
         id: generateId(),
@@ -650,6 +662,11 @@
         notes: null,
       })
     }
+  }
+
+  function resuggestSteps() {
+    processSteps.length = 0
+    suggestSteps()
   }
 
   // ── Autolyse Split Drag ──────────────────────────────────────
@@ -671,11 +688,9 @@
       evt.from.insertBefore(evt.item, evt.from.children[evt.oldIndex] || null)
 
       // Sparse overrides: only store non-default positions
-      const ing = ingredients.find((i) => i.id === itemId)
-      const engineDefault =
-        ing?.category === 'FLOUR' || ing?.category === 'LIQUID'
-          ? 'autolyse'
-          : 'final'
+      const { phases: phaseMap } = classifyAllIngredients(ingredients)
+      const phase = phaseMap.get(itemId)
+      const engineDefault = phase === MIXING_PHASES.AUTOLYSE ? 'autolyse' : 'final'
 
       if (targetList === engineDefault) {
         const { [itemId]: _, ...rest } = autolyseOverrides
@@ -1514,6 +1529,11 @@
           <p class="text-xs text-muted-foreground mt-1">Drag ingredients between lists to customize the split</p>
         </CardHeader>
         <CardContent>
+          {#if autolyseWarnings.length > 0}
+            <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 mb-4">
+              {autolyseWarnings[0].message}
+            </div>
+          {/if}
           <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div>
               <h3 class="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-teal-700">
@@ -1578,10 +1598,15 @@
         Process Steps
       </CardTitle>
       <div class="flex gap-2">
-        {#if autolyse && processSteps.length === 0}
+        {#if processSteps.length === 0}
           <Button variant="outline" size="sm" onclick={suggestSteps} class="border-teal-300 text-teal-700 hover:bg-teal-50">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83"/></svg>
-            Suggest Autolyse
+            Suggest Mixing Steps
+          </Button>
+        {:else}
+          <Button variant="ghost" size="sm" onclick={resuggestSteps} class="text-teal-700 hover:bg-teal-50">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83"/></svg>
+            Re-suggest
           </Button>
         {/if}
         <Button variant="outline" size="sm" onclick={addProcessStep}>
