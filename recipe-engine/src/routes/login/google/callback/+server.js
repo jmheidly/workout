@@ -4,8 +4,13 @@ import { google } from '$lib/server/oauth.js'
 import {
   getUserByGoogleId,
   getUserByEmail,
+  getUserById,
   createGoogleUser,
   updateUser,
+  createBakery,
+  addBakeryMember,
+  setActiveBakery,
+  getBakeryMember,
 } from '$lib/server/db.js'
 import { createSession, setSessionCookie } from '$lib/server/auth.js'
 
@@ -33,6 +38,7 @@ export async function GET({ url, cookies }) {
   const name = /** @type {string} */ (claims.name || '')
 
   let user
+  let isNewUser = false
 
   // Check if user already exists by google_id
   const existingByGoogle = getUserByGoogleId(googleId)
@@ -51,6 +57,7 @@ export async function GET({ url, cookies }) {
     } else {
       // New user
       user = createGoogleUser(email, name, googleId)
+      isNewUser = true
     }
   }
 
@@ -61,5 +68,31 @@ export async function GET({ url, cookies }) {
   cookies.delete('google_oauth_state', { path: '/' })
   cookies.delete('google_oauth_code_verifier', { path: '/' })
 
-  redirect(302, '/recipes')
+  // Check for invite token
+  const inviteToken = cookies.get('oauth_invite_token')
+  if (inviteToken) {
+    cookies.delete('oauth_invite_token', { path: '/' })
+    redirect(302, `/invite/${inviteToken}`)
+  }
+
+  if (isNewUser) {
+    // Create personal bakery for new user
+    const slug = email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    const displayName = name || email.split('@')[0]
+    const bakery = createBakery(`${displayName}'s Bakery`, slug, user.id)
+    addBakeryMember(bakery.id, user.id, 'owner')
+    setActiveBakery(user.id, bakery.id)
+    redirect(302, '/recipes')
+  }
+
+  // Existing user — check active bakery
+  const fullUser = getUserById(user.id)
+  if (fullUser?.active_bakery_id) {
+    const member = getBakeryMember(fullUser.active_bakery_id, user.id)
+    if (member) {
+      redirect(302, '/recipes')
+    }
+  }
+
+  redirect(302, '/bakeries')
 }

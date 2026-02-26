@@ -8,7 +8,7 @@ import {
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { ingredients: getIngredientLibrary(locals.user.id) }
+  return { ingredients: getIngredientLibrary(locals.bakery.id) }
 }
 
 /** @type {import('./$types').Actions} */
@@ -21,7 +21,7 @@ export const actions = {
     if (!category) return fail(400, { error: 'Category is required' })
 
     try {
-      createIngredientLibraryEntry(locals.user.id, name, category)
+      createIngredientLibraryEntry(locals.user.id, locals.bakery.id, name, category)
     } catch (e) {
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return fail(400, { error: 'An ingredient with that name already exists' })
@@ -31,7 +31,7 @@ export const actions = {
     return { success: true }
   },
 
-  update: async ({ request }) => {
+  update: async ({ request, locals }) => {
     const form = await request.formData()
     const id = form.get('id')?.toString()
     const name = form.get('name')?.toString()?.trim()
@@ -41,7 +41,7 @@ export const actions = {
     if (!category) return fail(400, { error: 'Category is required' })
 
     try {
-      updateIngredientLibraryEntry(id, name, category)
+      updateIngredientLibraryEntry(id, locals.bakery.id, name, category)
     } catch (e) {
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return fail(400, { error: 'An ingredient with that name already exists' })
@@ -51,12 +51,12 @@ export const actions = {
     return { success: true }
   },
 
-  delete: async ({ request }) => {
+  delete: async ({ request, locals }) => {
     const form = await request.formData()
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing id' })
 
-    deleteIngredientLibraryEntry(id)
+    deleteIngredientLibraryEntry(id, locals.bakery.id)
     return { success: true }
   },
 }

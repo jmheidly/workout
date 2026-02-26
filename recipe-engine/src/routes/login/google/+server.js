@@ -3,7 +3,7 @@ import { generateState, generateCodeVerifier } from 'arctic'
 import { google } from '$lib/server/oauth.js'
 
 /** @type {import('./$types').RequestHandler} */
-export function GET({ cookies }) {
+export function GET({ cookies, url: requestUrl }) {
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
 
@@ -28,6 +28,18 @@ export function GET({ cookies }) {
     secure: false,
     maxAge: 60 * 10,
   })
+
+  // Store invite token for post-OAuth redirect
+  const inviteToken = requestUrl.searchParams.get('invite')
+  if (inviteToken) {
+    cookies.set('oauth_invite_token', inviteToken, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false,
+      maxAge: 60 * 10,
+    })
+  }
 
   redirect(302, url.toString())
 }

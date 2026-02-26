@@ -6,7 +6,7 @@
 
   const sidebar = useSidebar()
 
-  let { user = null } = $props()
+  let { user = null, bakery = null } = $props()
 
   const navItems = [
     {
@@ -38,8 +38,8 @@
       icon: 'mixer',
     },
     {
-      label: 'Settings',
-      href: '/settings',
+      label: 'Bakery Settings',
+      href: '/bakeries/settings',
       icon: 'settings',
     },
   ]
@@ -57,7 +57,7 @@
   <Sidebar.Header>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
-        <Sidebar.MenuButton size="lg" href="/recipes" tooltipContent="Recipe Engine">
+        <Sidebar.MenuButton size="lg" href="/bakeries" tooltipContent="Switch Bakery">
           <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -75,7 +75,7 @@
             </svg>
           </div>
           <div class="grid flex-1 text-left text-sm leading-tight">
-            <span class="truncate font-semibold">Recipe Engine</span>
+            <span class="truncate font-semibold">{bakery?.name || 'Recipe Engine'}</span>
             <span class="truncate text-xs">Bakery Management</span>
           </div>
         </Sidebar.MenuButton>

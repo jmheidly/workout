@@ -24,6 +24,7 @@ db.exec(`
     password_hash TEXT,
     name TEXT,
     google_id TEXT,
+    active_bakery_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -31,9 +32,36 @@ db.exec(`
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS bakeries (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by TEXT NOT NULL REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS bakery_members (
+    id TEXT PRIMARY KEY,
+    bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member',
+    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(bakery_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS invitations (
+    id TEXT PRIMARY KEY,
+    bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member',
+    invited_by TEXT NOT NULL REFERENCES users(id),
+    token TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    UNIQUE(bakery_id, email)
+  );
   CREATE TABLE IF NOT EXISTS recipes (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bakery_id TEXT REFERENCES bakeries(id),
     name TEXT NOT NULL,
     yield_per_piece REAL NOT NULL DEFAULT 0,
     ddt REAL NOT NULL DEFAULT 24,
@@ -43,6 +71,7 @@ db.exec(`
     autolyse_duration_min INTEGER NOT NULL DEFAULT 20,
     mixer_profile_id TEXT,
     mix_type TEXT NOT NULL DEFAULT 'Improved Mix',
+    version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -82,6 +111,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS mixer_profiles (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bakery_id TEXT REFERENCES bakeries(id),
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'SPIRAL',
     friction_factor REAL NOT NULL DEFAULT 12,
@@ -94,6 +124,14 @@ db.exec(`
     mix_type TEXT NOT NULL,
     first_speed_rounds REAL NOT NULL,
     UNIQUE(mixer_id, mix_type)
+  );
+  CREATE TABLE IF NOT EXISTS ingredient_library (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bakery_id TEXT REFERENCES bakeries(id),
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    UNIQUE(bakery_id, name COLLATE NOCASE)
   );
 `)
 
@@ -118,27 +156,56 @@ if (!demoUser) {
 
 const userId = demoUser.id
 
+// ─── Create Demo Bakery ──────────────────────────────────────────────────────
+
+const demoBakeryId = randomUUID()
+let existingBakery = db
+  .prepare("SELECT id FROM bakeries WHERE slug = 'demo'")
+  .get()
+
+if (!existingBakery) {
+  db.prepare(
+    'INSERT INTO bakeries (id, name, slug, created_by) VALUES (?, ?, ?, ?)'
+  ).run(demoBakeryId, 'Demo Bakery', 'demo', userId)
+
+  db.prepare(
+    'INSERT INTO bakery_members (id, bakery_id, user_id, role) VALUES (?, ?, ?, ?)'
+  ).run(randomUUID(), demoBakeryId, userId, 'owner')
+
+  db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(
+    demoBakeryId,
+    userId
+  )
+
+  console.log('Created Demo Bakery with demo user as owner')
+} else {
+  console.log('Demo bakery already exists')
+}
+
+const bakeryId = existingBakery?.id || demoBakeryId
+
 // ─── Seed Mixer Profiles (§7.6) ─────────────────────────────────────────────
 
 console.log('\nSeeding mixer profiles...\n')
 
-// Clear existing mixer profiles for demo user
+// Clear existing mixer profiles for bakery
 const existingMixers = db
-  .prepare('SELECT COUNT(*) as count FROM mixer_profiles WHERE user_id = ?')
-  .get(userId)
+  .prepare('SELECT COUNT(*) as count FROM mixer_profiles WHERE bakery_id = ?')
+  .get(bakeryId)
 if (existingMixers.count > 0) {
-  db.prepare('DELETE FROM mixer_profiles WHERE user_id = ?').run(userId)
+  db.prepare('DELETE FROM mixer_profiles WHERE bakery_id = ?').run(bakeryId)
   console.log(`  Cleared ${existingMixers.count} existing mixer profiles\n`)
 }
 
 function insertMixerProfile(def) {
   const id = randomUUID()
   db.prepare(
-    `INSERT INTO mixer_profiles (id, user_id, name, type, friction_factor, first_speed_rpm, second_speed_rpm)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO mixer_profiles (id, user_id, bakery_id, name, type, friction_factor, first_speed_rpm, second_speed_rpm)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     userId,
+    bakeryId,
     def.name,
     def.type,
     def.friction_factor,
@@ -203,10 +270,11 @@ function insertRecipe(recipeDef) {
   const recipeId = randomUUID()
 
   db.prepare(
-    'INSERT INTO recipes (id, user_id, name, yield_per_piece, ddt, mixer_profile_id, mix_type) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, mixer_profile_id, mix_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     recipeId,
     userId,
+    bakeryId,
     recipeDef.name,
     recipeDef.yield_per_piece,
     recipeDef.ddt,
@@ -270,12 +338,12 @@ function insertRecipe(recipeDef) {
 
 console.log('\nSeeding recipes...\n')
 
-// Clear existing recipes for demo user
+// Clear existing recipes for bakery
 const existing = db
-  .prepare('SELECT COUNT(*) as count FROM recipes WHERE user_id = ?')
-  .get(userId)
+  .prepare('SELECT COUNT(*) as count FROM recipes WHERE bakery_id = ?')
+  .get(bakeryId)
 if (existing.count > 0) {
-  db.prepare('DELETE FROM recipes WHERE user_id = ?').run(userId)
+  db.prepare('DELETE FROM recipes WHERE bakery_id = ?').run(bakeryId)
   console.log(`  Cleared ${existing.count} existing recipes\n`)
 }
 

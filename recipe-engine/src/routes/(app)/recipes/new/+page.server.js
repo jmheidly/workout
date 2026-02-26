@@ -3,7 +3,7 @@ import { createRecipe, getMixerProfiles } from '$lib/server/db.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { mixerProfiles: getMixerProfiles(locals.user.id) }
+  return { mixerProfiles: getMixerProfiles(locals.bakery.id) }
 }
 
 /** @type {import('./$types').Actions} */
@@ -18,7 +18,7 @@ export const actions = {
       return fail(400, { error: 'Recipe name is required', name, yield_per_piece: yieldPerPiece, ddt })
     }
 
-    const id = createRecipe(locals.user.id, {
+    const id = createRecipe(locals.user.id, locals.bakery.id, {
       name,
       yield_per_piece: yieldPerPiece,
       ddt,

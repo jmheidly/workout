@@ -5,11 +5,5 @@ export function load({ locals }) {
   if (!locals.user) {
     redirect(302, '/login')
   }
-  if (!locals.bakery) {
-    redirect(302, '/bakeries')
-  }
-  return {
-    user: locals.user,
-    bakery: locals.bakery,
-  }
+  return { user: locals.user }
 }

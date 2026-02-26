@@ -4,14 +4,10 @@ import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
-  const recipe = getRecipe(params.id)
+  const recipe = getRecipe(params.id, locals.bakery.id)
 
   if (!recipe) {
     error(404, 'Recipe not found')
-  }
-
-  if (recipe.user_id !== locals.user.id) {
-    error(403, 'Not authorized')
   }
 
   let calculated = null
@@ -21,8 +17,8 @@ export function load({ params, locals }) {
     // return recipe without calculations if engine fails
   }
 
-  const mixerProfiles = getMixerProfiles(locals.user.id)
-  const ingredientLibrary = getIngredientLibrary(locals.user.id)
+  const mixerProfiles = getMixerProfiles(locals.bakery.id)
+  const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
 
   return { recipe, calculated, mixerProfiles, ingredientLibrary }
 }
@@ -41,14 +37,14 @@ export const actions = {
       return fail(400, { error: 'Invalid data' })
     }
 
-    // Verify ownership
-    const existing = getRecipe(params.id)
-    if (!existing || existing.user_id !== locals.user.id) {
+    // Verify bakery ownership
+    const existing = getRecipe(params.id, locals.bakery.id)
+    if (!existing) {
       return fail(403, { error: 'Not authorized' })
     }
 
-    updateRecipe(params.id, data)
-    syncIngredientLibrary(locals.user.id, data.ingredients || [])
+    updateRecipe(params.id, locals.bakery.id, data)
+    syncIngredientLibrary(locals.user.id, locals.bakery.id, data.ingredients || [])
 
     // Return updated recipe + calculation
     const recipe = getRecipe(params.id)
@@ -59,7 +55,7 @@ export const actions = {
       // ignore
     }
 
-    const ingredientLibrary = getIngredientLibrary(locals.user.id)
+    const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
 
     return { success: true, recipe, calculated, ingredientLibrary }
   }

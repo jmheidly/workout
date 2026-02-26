@@ -1,21 +1,22 @@
 import { fail, redirect } from '@sveltejs/kit'
-import { getUserByEmail } from '$lib/server/db.js'
+import { getUserByEmail, getUserById, getBakeryMember } from '$lib/server/db.js'
 import {
   verifyPassword,
   createSession,
-  setSessionCookie
+  setSessionCookie,
 } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
-export function load({ locals }) {
+export function load({ locals, url }) {
   if (locals.user) {
     redirect(302, '/recipes')
   }
+  return { invite: url.searchParams.get('invite') || null }
 }
 
 /** @type {import('./$types').Actions} */
 export const actions = {
-  default: async ({ request, cookies }) => {
+  default: async ({ request, cookies, url }) => {
     const form = await request.formData()
     const email = form.get('email')?.toString()?.trim()?.toLowerCase()
     const password = form.get('password')?.toString()
@@ -32,6 +33,21 @@ export const actions = {
     const { token, expiresAt } = createSession(user.id)
     setSessionCookie(cookies, token, expiresAt)
 
-    redirect(302, '/recipes')
-  }
+    // Check for invite token
+    const inviteToken = url.searchParams.get('invite')
+    if (inviteToken) {
+      redirect(302, `/invite/${inviteToken}`)
+    }
+
+    // Check if user has an active bakery
+    const fullUser = getUserById(user.id)
+    if (fullUser?.active_bakery_id) {
+      const member = getBakeryMember(fullUser.active_bakery_id, user.id)
+      if (member) {
+        redirect(302, '/recipes')
+      }
+    }
+
+    redirect(302, '/bakeries')
+  },
 }

@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import CryptoJS from 'crypto-js'
+import { redirect, error } from '@sveltejs/kit'
 import {
   createSession as dbCreateSession,
   getSession as dbGetSession,
@@ -117,4 +118,17 @@ export function setSessionCookie(cookies, token, expiresAt) {
  */
 export function deleteSessionCookie(cookies) {
   cookies.delete(SESSION_COOKIE, { path: '/' })
+}
+
+/**
+ * Require the current user to have one of the specified bakery roles.
+ * Throws redirect to /bakeries if no bakery context, or 403 if role insufficient.
+ * @param {object} locals
+ * @param {...string} allowedRoles
+ */
+export function requireRole(locals, ...allowedRoles) {
+  if (!locals.bakery) throw redirect(303, '/bakeries')
+  if (!allowedRoles.includes(locals.bakery.role)) {
+    throw error(403, 'Insufficient permissions')
+  }
 }

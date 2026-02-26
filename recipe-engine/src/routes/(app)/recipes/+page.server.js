@@ -1,10 +1,10 @@
 import { fail } from '@sveltejs/kit'
-import { getRecipesByUser, deleteRecipe, getRecipe } from '$lib/server/db.js'
+import { getRecipesByBakery, deleteRecipe, getRecipe } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  const recipes = getRecipesByUser(locals.user.id)
+  const recipes = getRecipesByBakery(locals.bakery.id)
 
   // Calculate hydration + totals for each recipe
   const enriched = recipes.map((r) => {
@@ -46,13 +46,13 @@ export const actions = {
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing recipe ID' })
 
-    // Verify ownership
-    const recipe = getRecipe(id)
-    if (!recipe || recipe.user_id !== locals.user.id) {
-      return fail(403, { error: 'Not authorized' })
+    // Verify bakery ownership
+    const recipe = getRecipe(id, locals.bakery.id)
+    if (!recipe) {
+      return fail(404, { error: 'Recipe not found' })
     }
 
-    deleteRecipe(id)
+    deleteRecipe(id, locals.bakery.id)
     return { success: true }
   }
 }

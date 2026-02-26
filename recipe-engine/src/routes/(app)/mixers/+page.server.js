@@ -8,7 +8,7 @@ import {
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { mixerProfiles: getMixerProfiles(locals.user.id) }
+  return { mixerProfiles: getMixerProfiles(locals.bakery.id) }
 }
 
 /** @type {import('./$types').Actions} */
@@ -27,7 +27,7 @@ export const actions = {
 
     if (!data.name?.trim()) return fail(400, { error: 'Name is required' })
 
-    createMixerProfile(locals.user.id, data)
+    createMixerProfile(locals.user.id, locals.bakery.id, data)
     return { success: true }
   },
 
@@ -44,16 +44,16 @@ export const actions = {
       return fail(400, { error: 'Invalid data' })
     }
 
-    updateMixerProfile(id, data)
+    updateMixerProfile(id, locals.bakery.id, data)
     return { success: true }
   },
 
-  delete: async ({ request }) => {
+  delete: async ({ request, locals }) => {
     const form = await request.formData()
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing id' })
 
-    deleteMixerProfile(id)
+    deleteMixerProfile(id, locals.bakery.id)
     return { success: true }
   },
 }

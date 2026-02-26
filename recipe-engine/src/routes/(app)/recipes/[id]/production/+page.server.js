@@ -4,14 +4,10 @@ import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
-  const recipe = getRecipe(params.id)
+  const recipe = getRecipe(params.id, locals.bakery.id)
 
   if (!recipe) {
     error(404, 'Recipe not found')
-  }
-
-  if (recipe.user_id !== locals.user.id) {
-    error(403, 'Not authorized')
   }
 
   let calculated = null
