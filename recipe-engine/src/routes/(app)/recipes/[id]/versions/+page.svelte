@@ -32,24 +32,6 @@
     PREFERMENT: 'bg-indigo-100 text-indigo-800',
   }
 
-  // Build diffs between adjacent versions for the timeline
-  let versionDiffs = $derived.by(() => {
-    const versions = data.versions
-    if (versions.length < 2) return {}
-
-    const diffs = {}
-    // versions are sorted DESC, so [0] is newest
-    for (let i = 0; i < versions.length - 1; i++) {
-      const newer = versions[i]
-      const older = versions[i + 1]
-
-      // We only have snapshots when viewing — for the timeline, compute on the server
-      // Instead, we'll use the server-loaded compare data if available
-      diffs[newer.version_number] = null // placeholder
-    }
-    return diffs
-  })
-
   // Compare mode state
   let compareA = $state(null)
   let compareB = $state(null)
@@ -325,7 +307,7 @@
                 <div class="mt-1 h-4 w-px bg-border"></div>
               {/if}
             </div>
-            <div class="flex-1">
+            <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium">Current version</span>
                 <Badge variant="secondary" class="text-xs">Latest</Badge>
@@ -333,6 +315,11 @@
               <p class="mt-0.5 text-xs text-muted-foreground">
                 Last saved {formatDate(data.recipe.updated_at)}
               </p>
+              {#if data.changeSummaries?.[data.recipe.version]}
+                <p class="mt-1 text-sm text-foreground/80">
+                  {data.changeSummaries[data.recipe.version]}
+                </p>
+              {/if}
             </div>
             <div class="flex items-center gap-1">
               <Button
@@ -378,6 +365,11 @@
                 {#if version.change_notes}
                   <p class="mt-1 text-sm italic text-muted-foreground">
                     "{version.change_notes}"
+                  </p>
+                {/if}
+                {#if data.changeSummaries?.[version.version_number]}
+                  <p class="mt-1 text-sm text-foreground/80">
+                    {data.changeSummaries[version.version_number]}
                   </p>
                 {/if}
               </div>
