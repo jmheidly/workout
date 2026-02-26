@@ -133,6 +133,17 @@ db.exec(`
     category TEXT NOT NULL,
     UNIQUE(bakery_id, name COLLATE NOCASE)
   );
+  CREATE TABLE IF NOT EXISTS recipe_versions (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    snapshot TEXT NOT NULL,
+    change_notes TEXT,
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(recipe_id, version_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_recipe_versions_recipe ON recipe_versions(recipe_id);
 `)
 
 // Create demo user

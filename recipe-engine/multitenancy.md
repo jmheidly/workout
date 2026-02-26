@@ -121,9 +121,13 @@ CREATE TABLE invitations (
 | `mixer_profiles` | `bakery_id TEXT REFERENCES bakeries(id)` | Tenant scope |
 | `ingredient_library` | `bakery_id TEXT REFERENCES bakeries(id)` | Tenant scope |
 
+**Note:** The `bakery_id` foreign keys on domain tables (`recipes`, `mixer_profiles`, `ingredient_library`) do NOT use `ON DELETE CASCADE`. Bakery deletion is handled in application code (see §4.3). The `user_id` columns remain on all domain tables for attribution — they are NOT removed.
+
 ### 3.3 Modified Constraints
 
 `ingredient_library` UNIQUE constraint changed from `UNIQUE(user_id, name COLLATE NOCASE)` to `UNIQUE(bakery_id, name COLLATE NOCASE)`. This means ingredient names are unique per bakery, not per user.
+
+**SQLite limitation:** SQLite cannot `ALTER TABLE DROP CONSTRAINT`. The migration uses the create-copy-drop-rename pattern: create `ingredient_library_new` with the new UNIQUE constraint, copy all rows, drop the old table, rename. This runs inside `migrateToMultiTenant()` and is guarded — only executes if the old `(user_id, name)` index still exists.
 
 ### 3.4 Indexes
 
@@ -161,13 +165,23 @@ Bakeries are created via:
 
 Required fields: `name` (display name), `slug` (URL-safe identifier, unique). The creating user is automatically added as `owner`.
 
+**Slug generation:** Lowercase, replace non-alphanumeric characters with hyphens, collapse consecutive hyphens, trim leading/trailing hyphens. For auto-created bakeries on signup, the slug is derived from the email prefix (`email.split('@')[0]`). For manual creation, the slug auto-generates from the bakery name (editable by the user). Slug uniqueness is enforced by the DB.
+
 ### 4.2 Settings
 
 Owners and admins can update bakery name and slug at `/bakeries/settings`. Slug uniqueness is enforced.
 
 ### 4.3 Deletion
 
-Only owners can delete a bakery. Deletion CASCADE-removes all bakery_members, invitations, and (via the bakery_id foreign key) domain data. This is destructive and requires confirmation.
+Only owners can delete a bakery. This is destructive and requires confirmation. Deletion is handled in application code within a transaction:
+
+1. Delete all `recipes` where `bakery_id = ?` (this CASCADE-deletes `recipe_versions`, `recipe_ingredients`, `preferment_settings`, `preferment_bakers_pcts`, `process_steps`)
+2. Delete all `mixer_profiles` where `bakery_id = ?` (CASCADE-deletes `mixer_calibrations`)
+3. Delete all `ingredient_library` where `bakery_id = ?`
+4. Clear `active_bakery_id` for any user pointing to this bakery
+5. Delete the bakery itself (CASCADE-deletes `bakery_members` and `invitations` via their FK constraints)
+
+Application-level deletion is used because the `bakery_id` foreign keys on domain tables do not have `ON DELETE CASCADE` (SQLite cannot alter FK constraints after table creation without the create-copy-drop-rename pattern).
 
 ---
 
@@ -188,7 +202,14 @@ Only owners can delete a bakery. Deletion CASCADE-removes all bakery_members, in
 - Admins can invite/remove members and viewers
 - The last owner cannot be demoted or removed (prevents orphaned bakery)
 
-### 5.3 Enforcement
+### 5.3 Member Removal
+
+When a user is removed from a bakery:
+- Their `active_bakery_id` is cleared if it points to the removed bakery (handled in `removeBakeryMember()`)
+- Recipes, mixer profiles, and ingredients they created remain in the bakery — domain data belongs to the bakery, not the user
+- On next request, the middleware (§8.1) finds no bakery context and the `(app)` layout redirects to `/bakeries` for selection
+
+### 5.4 Enforcement
 
 Role checks use `requireRole(locals, ...allowedRoles)` from `auth.js`. This throws:
 - `redirect(303, '/bakeries')` if no bakery context
@@ -293,17 +314,17 @@ The `(app)` layout redirects to `/login` if no user, and to `/bakeries` if no ba
 
 ### 9.1 Query Pattern
 
-All domain data queries use `bakery_id` from `locals.bakery.id`:
+All domain data queries use `bakery_id` from `locals.bakery.id`. Create functions take both `userId` (attribution) and `bakeryId` (tenant scope):
 
-| Operation | Scoping |
-|-----------|---------|
-| List recipes | `WHERE bakery_id = ?` |
-| Get recipe | `WHERE id = ? AND bakery_id = ?` |
-| Create recipe | `INSERT ... bakery_id = ?` |
-| Update recipe | `WHERE id = ? AND bakery_id = ?` |
-| Delete recipe | `WHERE id = ? AND bakery_id = ?` |
+| Operation | Function Signature | Scoping |
+|-----------|-------------------|---------|
+| List recipes | `getRecipesByBakery(bakeryId)` | `WHERE bakery_id = ?` |
+| Get recipe | `getRecipe(id, bakeryId)` | `WHERE id = ? AND bakery_id = ?` |
+| Create recipe | `createRecipe(userId, bakeryId, data)` | `INSERT ... user_id, bakery_id` |
+| Update recipe | `updateRecipe(id, bakeryId, data)` | `WHERE id = ? AND bakery_id = ?` |
+| Delete recipe | `deleteRecipe(id, bakeryId)` | `WHERE id = ? AND bakery_id = ?` |
 
-Same pattern applies to mixer_profiles and ingredient_library.
+Same pattern applies to mixer_profiles and ingredient_library. `syncIngredientLibrary(userId, bakeryId, ingredients)` takes both for the same reason — `userId` for the `user_id` attribution column, `bakeryId` for tenant scoping and the UNIQUE constraint.
 
 ### 9.2 Defense in Depth
 

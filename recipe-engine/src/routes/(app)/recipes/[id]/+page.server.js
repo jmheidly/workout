@@ -1,5 +1,12 @@
 import { error, fail } from '@sveltejs/kit'
-import { getRecipe, updateRecipe, getMixerProfiles, getIngredientLibrary, syncIngredientLibrary } from '$lib/server/db.js'
+import {
+  getRecipe,
+  updateRecipe,
+  getMixerProfiles,
+  getIngredientLibrary,
+  syncIngredientLibrary,
+  getRecipeVersions,
+} from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 
 /** @type {import('./$types').PageServerLoad} */
@@ -19,8 +26,9 @@ export function load({ params, locals }) {
 
   const mixerProfiles = getMixerProfiles(locals.bakery.id)
   const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
+  const versionCount = getRecipeVersions(params.id).length
 
-  return { recipe, calculated, mixerProfiles, ingredientLibrary }
+  return { recipe, calculated, mixerProfiles, ingredientLibrary, versionCount }
 }
 
 /** @type {import('./$types').Actions} */
@@ -28,6 +36,7 @@ export const actions = {
   save: async ({ request, params, locals }) => {
     const form = await request.formData()
     const dataStr = form.get('data')?.toString()
+    const changeNotes = form.get('change_notes')?.toString() || null
     if (!dataStr) return fail(400, { error: 'Missing data' })
 
     let data
@@ -43,7 +52,7 @@ export const actions = {
       return fail(403, { error: 'Not authorized' })
     }
 
-    updateRecipe(params.id, locals.bakery.id, data)
+    updateRecipe(params.id, locals.bakery.id, data, locals.user.id, changeNotes)
     syncIngredientLibrary(locals.user.id, locals.bakery.id, data.ingredients || [])
 
     // Return updated recipe + calculation
@@ -56,7 +65,8 @@ export const actions = {
     }
 
     const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
+    const versionCount = getRecipeVersions(params.id).length
 
-    return { success: true, recipe, calculated, ingredientLibrary }
-  }
+    return { success: true, recipe, calculated, ingredientLibrary, versionCount }
+  },
 }

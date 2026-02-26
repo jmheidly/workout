@@ -16,6 +16,7 @@
     settings: 'Settings',
     bakeries: 'Bakery',
     members: 'Members',
+    versions: 'Version History',
   }
 
   function resolveLabel(seg, segments, index) {

@@ -107,6 +107,19 @@ function initSchema(db) {
       UNIQUE(user_id, name COLLATE NOCASE)
     );
 
+    CREATE TABLE IF NOT EXISTS recipe_versions (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+      snapshot TEXT NOT NULL,
+      change_notes TEXT,
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(recipe_id, version_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recipe_versions_recipe ON recipe_versions(recipe_id);
+
     CREATE TABLE IF NOT EXISTS bakeries (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -626,10 +639,15 @@ export function getRecipesByBakery(bakeryId) {
  * @param {string} bakeryId
  * @param {RecipeInput} data
  */
-export function updateRecipe(id, bakeryId, data) {
+export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
   const db = getDb()
 
   const txn = db.transaction(() => {
+    // §12.4: Snapshot the CURRENT state before overwriting
+    if (userId) {
+      snapshotBeforeUpdate(id, userId, changeNotes)
+    }
+
     db.prepare(
       `UPDATE recipes SET name = ?, yield_per_piece = ?, ddt = ?,
        process_loss_pct = ?, bake_loss_pct = ?, autolyse = ?, autolyse_duration_min = ?,
@@ -735,6 +753,107 @@ export function updateRecipe(id, bakeryId, data) {
 export function deleteRecipe(id, bakeryId) {
   const db = getDb()
   db.prepare('DELETE FROM recipes WHERE id = ? AND bakery_id = ?').run(id, bakeryId)
+}
+
+// ─── Recipe Versioning ───────────────────────────────────────────────────────
+
+/**
+ * Build a snapshot object from a loaded recipe (as returned by getRecipe).
+ * Captures all inputs needed to reconstruct via calculateRecipe().
+ * @param {object} recipe - full recipe from getRecipe()
+ * @returns {object}
+ */
+export function buildRecipeSnapshot(recipe) {
+  return {
+    name: recipe.name,
+    yield_per_piece: recipe.yield_per_piece,
+    ddt: recipe.ddt,
+    autolyse: recipe.autolyse,
+    autolyse_duration_min: recipe.autolyse_duration_min,
+    mix_type: recipe.mix_type,
+    mixer_profile_id: recipe.mixer_profile_id,
+    process_loss_pct: recipe.process_loss_pct,
+    bake_loss_pct: recipe.bake_loss_pct,
+    ingredients: (recipe.ingredients || []).map((ing) => ({
+      id: ing.id,
+      name: ing.name,
+      category: ing.category,
+      base_qty: ing.base_qty,
+      sort_order: ing.sort_order,
+      preferment_bakers_pcts: ing.preferment_bakers_pcts || {},
+      preferment_settings: ing.preferment_settings || null,
+    })),
+    process_steps: (recipe.process_steps || []).map((s) => ({
+      id: s.id,
+      stage: s.stage,
+      sort_order: s.sort_order,
+      title: s.title,
+      description: s.description,
+      duration_min: s.duration_min,
+      temperature: s.temperature,
+      mixer_speed: s.mixer_speed,
+      notes: s.notes,
+    })),
+  }
+}
+
+/**
+ * Snapshot the current recipe state before applying an update.
+ * Called inside updateRecipe's transaction.
+ * @param {string} recipeId
+ * @param {string} userId - who is saving
+ * @param {string|null} [changeNotes]
+ */
+export function snapshotBeforeUpdate(recipeId, userId, changeNotes) {
+  const db = getDb()
+  const recipe = getRecipe(recipeId)
+  if (!recipe) return
+
+  const currentVersion = recipe.version || 1
+  const snapshot = JSON.stringify(buildRecipeSnapshot(recipe))
+
+  // Check if this version is already snapshotted (idempotency)
+  const existing = db
+    .prepare('SELECT id FROM recipe_versions WHERE recipe_id = ? AND version_number = ?')
+    .get(recipeId, currentVersion)
+  if (existing) return
+
+  db.prepare(
+    `INSERT INTO recipe_versions (id, recipe_id, version_number, snapshot, change_notes, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(generateId(), recipeId, currentVersion, snapshot, changeNotes || null, userId)
+}
+
+/**
+ * Get all versions for a recipe (metadata only, no snapshots).
+ * @param {string} recipeId
+ * @returns {Array<{id: string, version_number: number, change_notes: string|null, created_by: string, created_at: string, creator_name: string|null, creator_email: string}>}
+ */
+export function getRecipeVersions(recipeId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rv.id, rv.version_number, rv.change_notes, rv.created_by, rv.created_at,
+              u.name as creator_name, u.email as creator_email
+       FROM recipe_versions rv
+       LEFT JOIN users u ON u.id = rv.created_by
+       WHERE rv.recipe_id = ?
+       ORDER BY rv.version_number DESC`
+    )
+    .all(recipeId)
+}
+
+/**
+ * Get a specific version's snapshot.
+ * @param {string} recipeId
+ * @param {number} versionNumber
+ * @returns {{id: string, version_number: number, snapshot: string, change_notes: string|null, created_by: string, created_at: string} | undefined}
+ */
+export function getRecipeVersion(recipeId, versionNumber) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM recipe_versions WHERE recipe_id = ? AND version_number = ?')
+    .get(recipeId, versionNumber)
 }
 
 // ─── Mixer Profiles ──────────────────────────────────────────────────────────
@@ -991,7 +1110,17 @@ export function updateBakery(id, fields) {
 /** @param {string} id */
 export function deleteBakery(id) {
   const db = getDb()
-  db.prepare('DELETE FROM bakeries WHERE id = ?').run(id)
+  const txn = db.transaction(() => {
+    // Domain tables lack ON DELETE CASCADE on bakery_id, so delete explicitly
+    db.prepare('DELETE FROM recipes WHERE bakery_id = ?').run(id)
+    db.prepare('DELETE FROM mixer_profiles WHERE bakery_id = ?').run(id)
+    db.prepare('DELETE FROM ingredient_library WHERE bakery_id = ?').run(id)
+    // Clear active_bakery_id for any user pointing to this bakery
+    db.prepare('UPDATE users SET active_bakery_id = NULL WHERE active_bakery_id = ?').run(id)
+    // bakery_members and invitations CASCADE from bakeries FK
+    db.prepare('DELETE FROM bakeries WHERE id = ?').run(id)
+  })
+  txn()
 }
 
 /**
@@ -1060,10 +1189,18 @@ export function updateBakeryMemberRole(bakeryId, userId, role) {
  */
 export function removeBakeryMember(bakeryId, userId) {
   const db = getDb()
-  db.prepare('DELETE FROM bakery_members WHERE bakery_id = ? AND user_id = ?').run(
-    bakeryId,
-    userId
-  )
+  const txn = db.transaction(() => {
+    db.prepare('DELETE FROM bakery_members WHERE bakery_id = ? AND user_id = ?').run(
+      bakeryId,
+      userId
+    )
+    // Clear active_bakery_id if it points to the bakery they were removed from
+    db.prepare('UPDATE users SET active_bakery_id = NULL WHERE id = ? AND active_bakery_id = ?').run(
+      userId,
+      bakeryId
+    )
+  })
+  txn()
 }
 
 /**

@@ -759,6 +759,16 @@
 
 <div class="sticky top-0 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm">
   <div class="flex items-center gap-3">
+    <a
+      href="/recipes/{data.recipe.id}/versions"
+      class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+      title="View version history"
+    >
+      v{data.recipe.version}
+      {#if data.versionCount > 0}
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+      {/if}
+    </a>
     <div class="flex-1"></div>
 
     {#if isDraft}
@@ -793,6 +803,8 @@
           if (result.type === 'success') {
             toast.success('Recipe saved')
             if (result.data?.calculated) calculated = result.data.calculated
+            if (result.data?.recipe) data.recipe.version = result.data.recipe.version
+            if (result.data?.versionCount !== undefined) data.versionCount = result.data.versionCount
             if (result.data?.ingredientLibrary) ingredientLibrary = result.data.ingredientLibrary
             savedSnapshot = JSON.stringify(buildRecipeData())
           } else {
