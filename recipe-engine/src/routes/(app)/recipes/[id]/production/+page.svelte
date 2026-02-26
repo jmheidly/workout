@@ -7,7 +7,7 @@
     getEffectiveDdt,
     formatDuration,
   } from '$lib/preferment-defaults.js'
-  import { MIX_TYPE_NAMES, MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -16,12 +16,6 @@
     CardContent,
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
-  import {
-    SelectRoot,
-    SelectTrigger,
-    SelectContent,
-    SelectItem,
-  } from '$lib/components/ui/select/index.js'
   import MixerPicker from '$lib/components/mixer-picker.svelte'
 
   let { data } = $props()
@@ -29,7 +23,7 @@
   // ── Mixer Selection (session-only, not saved to recipe) ──
 
   let mixerProfileId = $state('')
-  let mixType = $state('Improved Mix')
+  let mixType = $derived(data.recipe.mix_type || 'Improved Mix')
 
   let selectedMixer = $derived(
     mixerProfileId
@@ -198,19 +192,6 @@
           <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Mixer</label>
           <MixerPicker mixerProfiles={data.mixerProfiles || []} bind:value={mixerProfileId} onCreateNew={() => {}} />
         </div>
-        {#if selectedMixer}
-          <div class="w-40">
-            <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Mix Type</label>
-            <SelectRoot type="single" value={mixType} onValueChange={(v) => { mixType = v }}>
-              <SelectTrigger class="w-full">{mixType}</SelectTrigger>
-              <SelectContent>
-                {#each MIX_TYPE_NAMES as name}
-                  <SelectItem value={name}>{name}</SelectItem>
-                {/each}
-              </SelectContent>
-            </SelectRoot>
-          </div>
-        {/if}
         <div class="w-28">
           <label for="room-temp" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Room Temp (&deg;C)</label>
           <input
@@ -339,6 +320,59 @@
     </Card>
   {/each}
 
+  <!-- ── Autolyse Split Card ────────────────────────────── -->
+
+  {#if data.calculated?.autolyse}
+    {@const auto = data.calculated.autolyse}
+    <Card class="border-teal-200">
+      <CardHeader class="pb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-teal-600"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>
+            Autolyse Split
+          </CardTitle>
+          <Badge variant="secondary" class="bg-teal-50 text-teal-700 font-normal tabular-nums">
+            {auto.autolyse_duration_min} min rest
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <!-- Autolyse Mix -->
+          <div>
+            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-teal-700">Autolyse Mix</h4>
+            <div class="space-y-1">
+              {#each auto.autolyse_ingredients as ing}
+                <div class="flex items-center justify-between rounded-md bg-teal-50/50 px-3 py-1.5 text-sm">
+                  <span class="font-medium">{ing.name}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty)}</span>
+                </div>
+              {/each}
+              {#if auto.autolyse_ingredients.length === 0}
+                <p class="text-sm text-muted-foreground">No ingredients</p>
+              {/if}
+            </div>
+          </div>
+          <!-- Final Mix (after rest) -->
+          <div>
+            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Final Mix (after rest)</h4>
+            <div class="space-y-1">
+              {#each auto.final_mix_ingredients as ing}
+                <div class="flex items-center justify-between rounded-md bg-muted/30 px-3 py-1.5 text-sm">
+                  <span class="font-medium">{ing.name}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty)}</span>
+                </div>
+              {/each}
+              {#if auto.final_mix_ingredients.length === 0}
+                <p class="text-sm text-muted-foreground">No ingredients</p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
+
   <!-- ── Final Dough Card ──────────────────────────────── -->
 
   <Card class="border-emerald-200">
@@ -417,6 +451,53 @@
           </div>
         </div>
       </div>
+    </CardContent>
+  </Card>
+
+  <!-- ── Process Steps Card ────────────────────────────── -->
+
+  <Card>
+    <CardHeader class="pb-4">
+      <CardTitle class="flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/></svg>
+        Process Steps
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      {#if data.recipe.process_steps && data.recipe.process_steps.length > 0}
+        <div class="space-y-2">
+          {#each data.recipe.process_steps as step, i}
+            <div class="flex items-start gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3">
+              <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums">{i + 1}</span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" class="text-[10px] font-normal">{step.stage}</Badge>
+                  <span class="text-sm font-medium">{step.title}</span>
+                  {#if step.duration_min}
+                    <Badge variant="secondary" class="font-normal tabular-nums text-[10px]">{step.duration_min} min</Badge>
+                  {/if}
+                  {#if step.temperature}
+                    <Badge variant="secondary" class="font-normal tabular-nums text-[10px]">{step.temperature}&deg;C</Badge>
+                  {/if}
+                  {#if step.mixer_speed}
+                    <Badge variant="secondary" class="font-normal text-[10px]">{step.mixer_speed}</Badge>
+                  {/if}
+                </div>
+                {#if step.description}
+                  <p class="mt-1 text-sm text-muted-foreground">{step.description}</p>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="flex flex-col items-center gap-2 py-6 text-center">
+          <p class="text-sm text-muted-foreground">No process steps defined.</p>
+          <Button variant="link" size="sm" href="/recipes/{data.recipe.id}" class="text-xs">
+            Add them in the recipe builder
+          </Button>
+        </div>
+      {/if}
     </CardContent>
   </Card>
 </div>

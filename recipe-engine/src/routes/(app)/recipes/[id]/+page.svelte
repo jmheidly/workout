@@ -29,7 +29,7 @@
 
   const CATEGORIES = [
     'FLOUR', 'LIQUID', 'ENRICHMENT', 'LEAVENING',
-    'SEASONING', 'SWEETENER', 'FLAVORING', 'MIXIN', 'PREFERMENT'
+    'SEASONING', 'SWEETENER', 'FLAVORING', 'CONDITIONER', 'MIXIN', 'PREFERMENT'
   ]
 
   const CATEGORY_COLORS = {
@@ -40,6 +40,7 @@
     SEASONING: 'bg-red-100 text-red-800',
     SWEETENER: 'bg-pink-100 text-pink-800',
     FLAVORING: 'bg-purple-100 text-purple-800',
+    CONDITIONER: 'bg-teal-100 text-teal-800',
     MIXIN: 'bg-orange-100 text-orange-800',
     PREFERMENT: 'bg-indigo-100 text-indigo-800'
   }

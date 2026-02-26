@@ -309,6 +309,19 @@ insertMixerProfile({
   },
 })
 
+insertMixerProfile({
+  name: 'Artofex Oblique',
+  type: 'OBLIQUE',
+  friction_factor: 8,
+  first_speed_rpm: 40,
+  second_speed_rpm: 80,
+  calibrations: {
+    'Improved Mix': 180,
+    'Intensive Mix': 200,
+    'Short Improved': 200,
+  },
+})
+
 // ─── Seed Recipes ────────────────────────────────────────────────────────────
 
 // Helper to insert a recipe
@@ -527,7 +540,7 @@ insertRecipe({
 })
 
 console.log(
-  '\nDone! Seeded 4 recipes + 3 mixer profiles'
+  '\nDone! Seeded 4 recipes + 4 mixer profiles'
 )
 console.log('  Owner: demo@example.com / demo123')
 console.log('  Viewer: viewer@example.com / viewer123\n')

@@ -64,6 +64,14 @@ export const COMMON_INGREDIENTS = [
   { name: 'Cardamom', category: 'FLAVORING' },
   { name: 'Cocoa Powder', category: 'FLAVORING' },
 
+  // Conditioners
+  { name: 'Ascorbic Acid', category: 'CONDITIONER' },
+  { name: 'Vital Wheat Gluten', category: 'CONDITIONER' },
+  { name: 'Lecithin', category: 'CONDITIONER' },
+  { name: 'DATEM', category: 'CONDITIONER' },
+  { name: 'Diastatic Malt', category: 'CONDITIONER' },
+  { name: 'L-Cysteine', category: 'CONDITIONER' },
+
   // Mixins
   { name: 'Walnuts', category: 'MIXIN' },
   { name: 'Raisins', category: 'MIXIN' },

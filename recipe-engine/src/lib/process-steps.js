@@ -275,16 +275,18 @@ export function suggestProcessSteps({
     mixer_speed: null,
   })
 
-  // Retard
+  // Retard (Suas Ch. 4 — retarding-proofing technique)
+  // 3–4°C for 12–48 h after shaping, then warm proof before baking.
+  // At 4°C yeast and bacteria become dormant — fermentation nearly stops.
   const retardDesc = isEnriched
-    ? 'Cold retard at 3\u00B0C. Fat slows staling \u2014 enriched doughs tolerate longer retards. Pull and temper 1\u20132 h before baking.'
-    : 'Cold retard at 3\u00B0C. Develops flavor complexity and strengthens crust color. Pull and temper 1\u20132 h before baking.'
+    ? 'Retard at 4\u00B0C for 12\u201348 h. Enriched doughs tolerate longer retards \u2014 fat insulates gluten. Temper at room temp before proofing.'
+    : 'Retard at 4\u00B0C for 12\u201348 h. Develops flavor complexity, strengthens crust color. Temper at room temp before proofing.'
   steps.push({
     stage: 'RETARD',
     title: 'Retard',
     description: retardDesc,
     duration_min: 720,
-    temperature: 3,
+    temperature: 4,
     mixer_speed: null,
   })
 

@@ -82,6 +82,9 @@ export function classifyMixingPhase(ingredient, totalFlourQty) {
   // 12. FLAVORING → INCORPORATION
   if (category === 'FLAVORING') return MIXING_PHASES.INCORPORATION
 
+  // 12b. CONDITIONER → INCORPORATION
+  if (category === 'CONDITIONER') return MIXING_PHASES.INCORPORATION
+
   // 13. ENRICHMENT: BP ≤ 4% → INCORPORATION, else → FAT_ADDITION
   if (category === 'ENRICHMENT') {
     const bp = totalFlourQty > 0 ? base_qty / totalFlourQty : 0
@@ -105,53 +108,68 @@ export function classifyMixingPhase(ingredient, totalFlourQty) {
  * - POOLISH: water contribution threshold (< 15% → INCORPORATION)
  * - LEVAIN: sourdough decision matrix based on hydration, inoculation, flour composition
  *
+ * All ratio metrics use TFQ-based totals (K + PF contributions) per §8.4.
+ *
  * @param {Array<{ id: string, name: string, category: string, base_qty: number, preferment_settings?: object, preferment_bakers_pcts?: object }>} ingredients
  * @returns {{ phases: Map<string, number>, warnings: Array<{ type: string, message: string }> }}
  */
 export function classifyAllIngredients(ingredients) {
-  const totalFlourQty = ingredients
+  // K-based flour total — used for initial per-ingredient BP thresholds (enrichment/sweetener)
+  const kFlourQty = ingredients
     .filter((i) => i.category === 'FLOUR')
     .reduce((sum, i) => sum + (i.base_qty || 0), 0)
 
+  // Enabled PFs for TFQ computation
+  const enabledPFs = ingredients.filter((i) => {
+    if (i.category !== 'PREFERMENT') return false
+    const s = i.preferment_settings
+    return (s?.enabled === 1 || s?.enabled === true) && (i.base_qty || 0) > 0
+  })
+
+  // TFQ-based flour totals (K + flour inside all PFs) — per §8.4 metrics
+  const flourIngredients = ingredients.filter((i) => i.category === 'FLOUR')
+  let totalFlourTfq = 0
+  let ryeQty = 0
+  let wholeWheatQty = 0
+  for (const f of flourIngredients) {
+    let fTfq = f.base_qty || 0
+    for (const pf of enabledPFs) {
+      fTfq += ingredientQtyInPf(f, pf, ingredients)
+    }
+    totalFlourTfq += fTfq
+    if (RYE_PATTERN.test(f.name)) ryeQty += fTfq
+    if (WHOLE_WHEAT_PATTERN.test(f.name)) wholeWheatQty += fTfq
+  }
+
+  // TFQ-based total water (K water + water from ALL enabled PFs)
+  const kWater = ingredients
+    .filter((i) => i.category === 'LIQUID')
+    .reduce((sum, i) => sum + (i.base_qty || 0), 0)
+  let pfWaterTotal = 0
+  for (const pf of enabledPFs) {
+    const water = pfWaterQty(pf, ingredients)
+    if (water !== null) pfWaterTotal += water
+  }
+  const totalFormulaWater = kWater + pfWaterTotal
+
+  // Initial per-ingredient classification
   const map = new Map()
   for (const ing of ingredients) {
-    const phase = classifyMixingPhase(ing, totalFlourQty)
+    const phase = classifyMixingPhase(ing, kFlourQty)
     if (phase !== null) map.set(ing.id, phase)
   }
 
   const warnings = []
 
-  // Post-pass: refine liquid PF classification in AUTOLYSE.
+  // Post-pass: refine liquid PF classification in AUTOLYSE
   const liquidPFs = ingredients.filter(
     (i) => i.category === 'PREFERMENT' && map.get(i.id) === MIXING_PHASES.AUTOLYSE
   )
 
   if (liquidPFs.length > 0) {
-    // Compute total formula water for ratio calculations
-    const kWater = ingredients
-      .filter((i) => i.category === 'LIQUID')
-      .reduce((sum, i) => sum + (i.base_qty || 0), 0)
-
-    let pfWaterTotal = 0
-    for (const pf of liquidPFs) {
-      const water = pfWaterQty(pf, ingredients)
-      if (water !== null) pfWaterTotal += water
-    }
-    const totalFormulaWater = kWater + pfWaterTotal
-
-    // Compute total hydration for gray-zone decisions
-    const totalHydration = totalFlourQty > 0 ? totalFormulaWater / totalFlourQty : 0
-
-    // Compute flour composition for heuristics
-    const flourIngredients = ingredients.filter((i) => i.category === 'FLOUR')
-    let ryeQty = 0
-    let wholeWheatQty = 0
-    for (const f of flourIngredients) {
-      if (RYE_PATTERN.test(f.name)) ryeQty += f.base_qty || 0
-      if (WHOLE_WHEAT_PATTERN.test(f.name)) wholeWheatQty += f.base_qty || 0
-    }
-    const ryePct = totalFlourQty > 0 ? ryeQty / totalFlourQty : 0
-    const wholeWheatPct = totalFlourQty > 0 ? wholeWheatQty / totalFlourQty : 0
+    const totalHydration = totalFlourTfq > 0 ? totalFormulaWater / totalFlourTfq : 0
+    const ryePct = totalFlourTfq > 0 ? ryeQty / totalFlourTfq : 0
+    const wholeWheatPct = totalFlourTfq > 0 ? wholeWheatQty / totalFlourTfq : 0
 
     for (const pf of liquidPFs) {
       const pfType = pf.preferment_settings?.type
@@ -165,8 +183,8 @@ export function classifyAllIngredients(ingredients) {
           }
         }
       } else if (pfType === 'LEVAIN') {
-        // Sourdough decision matrix
-        const metrics = pfMetrics(pf, ingredients, totalFlourQty, totalFormulaWater)
+        // Sourdough decision matrix — uses TFQ-based totals
+        const metrics = pfMetrics(pf, ingredients, totalFlourTfq, totalFormulaWater)
 
         // Rule 0: No BP data — keep AUTOLYSE default
         if (!metrics) continue
@@ -219,6 +237,26 @@ export function classifyAllIngredients(ingredients) {
   }
 
   return { phases: map, warnings }
+}
+
+/**
+ * Compute grams of a specific ingredient inside a preferment.
+ * Uses the same proportional split as calcPrefermentBreakdown in engine.js.
+ * Returns 0 if ingredient has no BP entry for this PF.
+ */
+function ingredientQtyInPf(ingredient, pfIngredient, allIngredients) {
+  const bp = ingredient.preferment_bakers_pcts?.[pfIngredient.id]
+  if (!bp || bp <= 0) return 0
+  if (!pfIngredient.base_qty) return 0
+
+  let totalPfBp = 0
+  for (const ing of allIngredients) {
+    const ingBp = ing.preferment_bakers_pcts?.[pfIngredient.id]
+    if (ingBp != null && ingBp > 0) totalPfBp += ingBp
+  }
+
+  if (totalPfBp === 0) return 0
+  return (pfIngredient.base_qty / totalPfBp) * bp
 }
 
 /**

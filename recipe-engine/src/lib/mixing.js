@@ -12,7 +12,7 @@ export const MIX_TYPES = {
 
 export const MIX_TYPE_NAMES = Object.keys(MIX_TYPES)
 
-export const MIXER_TYPES = ['SPIRAL', 'PLANETARY', 'FORK', 'HAND']
+export const MIXER_TYPES = ['SPIRAL', 'OBLIQUE', 'PLANETARY', 'FORK', 'HAND']
 
 export const MIXER_TYPE_DEFAULTS = {
   SPIRAL: {
@@ -20,6 +20,12 @@ export const MIXER_TYPE_DEFAULTS = {
     first_speed_rpm: 105,
     second_speed_rpm: 204,
     cal: { 'Improved Mix': 420, 'Intensive Mix': 500, 'Short Improved': 500 },
+  },
+  OBLIQUE: {
+    friction: 8,
+    first_speed_rpm: 40,
+    second_speed_rpm: 80,
+    cal: { 'Improved Mix': 180, 'Intensive Mix': 200, 'Short Improved': 200 },
   },
   PLANETARY: {
     friction: 8,

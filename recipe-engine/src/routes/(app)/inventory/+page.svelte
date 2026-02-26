@@ -24,6 +24,7 @@
     'SEASONING',
     'SWEETENER',
     'FLAVORING',
+    'CONDITIONER',
     'MIXIN',
   ]
 
@@ -35,6 +36,7 @@
     SEASONING: 'Seasoning',
     SWEETENER: 'Sweetener',
     FLAVORING: 'Flavoring',
+    CONDITIONER: 'Conditioner',
     MIXIN: 'Mix-in',
   }
 

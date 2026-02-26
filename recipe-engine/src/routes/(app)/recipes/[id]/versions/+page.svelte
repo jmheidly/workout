@@ -29,6 +29,7 @@
     SWEETENER: 'bg-pink-100 text-pink-800',
     FLAVORING: 'bg-purple-100 text-purple-800',
     MIXIN: 'bg-orange-100 text-orange-800',
+    CONDITIONER: 'bg-teal-100 text-teal-800',
     PREFERMENT: 'bg-indigo-100 text-indigo-800',
   }
 

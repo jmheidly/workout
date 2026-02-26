@@ -132,16 +132,13 @@ console.log('\nRule 2: Whole wheat > 40% of total flour')
 // ─── Rule 3: High inoculation (>= 25%) → AUTOLYSE (fermentolyse) ───
 console.log('\nRule 3: High inoculation (>= 25%)')
 {
-  // Levain flour BP=100, water BP=100 → levain 400g has 200g flour
-  // Total flour = 1000 base, inoculation = 200/1000 = 20%... need higher
-  // Make levain bigger: 600g levain, BP total=200, flour=300g
-  // inoculation = 300/1000 = 30%
+  // Levain 700g, BP total=200 → flour=350g, water=350g
+  // TFQ flour = 1000 + 350 = 1350, inoculationPct = 350/1350 = 25.9%
   const ings = makeLevainRecipe({
-    levainQty: 600,
+    levainQty: 700,
     levainFlourBp: 100,
     levainWaterBp: 100,
   })
-  // levain flour = 600/200*100 = 300, inoculation = 300/1000 = 30%
   const { phases } = classifyAllIngredients(ings)
   assert('High inoculation → AUTOLYSE', phaseName(phases.get('levain')), 'AUTOLYSE')
 }

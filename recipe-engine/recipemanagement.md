@@ -1363,6 +1363,7 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 | SWEETENER (≤12% BP) | Beginning (1st speed) | Low sugar doesn't disrupt gluten |
 | SWEETENER (>12% BP) | In stages, or after development | Sugar is hygroscopic — large amounts steal water from proteins |
 | FLAVORING (dry powders) | Beginning (1st speed) | Malt powder, milk powder, etc. — with flour |
+| CONDITIONER | Beginning (1st speed) | Ascorbic acid, vital wheat gluten, DATEM, lecithin, enzymes, L-cysteine — always INCORPORATION timing |
 | MIXIN (nuts, fruit, chocolate) | End of mix, 1st speed ONLY | After full gluten development; 2nd speed would shred gluten bonds |
 | PREFERMENT (liquid — Poolish) | Autolyse (if water ratio >= 15%) or final mix | Water-ratio threshold: large poolish aids hydration, small poolish doesn't justify inclusion |
 | PREFERMENT (liquid — Levain) | Autolyse or final mix (sourdough matrix §8.4) | Depends on inoculation %, levain hydration, flour composition, and total dough hydration |
@@ -1425,11 +1426,76 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 3. PRESHAPE
 4. REST (bench rest) — duration from table
 5. SHAPE
-6. RETARD — 720 min (12 h) at 3°C. Develops flavor, strengthens crust color.
+6. RETARD — 720 min (12 h) default at 4°C. See §10.4 for retarding techniques.
 7. PROOF — duration from table, temp = proof temp
-8. BAKE — lean: 240°C with steam; enriched: 175°C without steam. Duration left null (varies by piece weight, oven, product type).
+8. BAKE — lean: 240°C / 22 min with steam; enriched: 175°C / 30 min without steam.
 
 Each step is independently trackable and editable. The baker can delete, reorder, or adjust any step. Steps like RETARD can be removed if the process doesn't use cold retardation.
+
+### 10.4 Retarding Techniques (Reference — Suas Ch. 4)
+
+Retarding delays fermentation by lowering dough temperature. At 4°C, yeast and bacteria become dormant and most activity stops. Three techniques differ in when retarding occurs and at what temperature.
+
+#### Delayed First Fermentation
+
+Retard in bulk immediately after mixing, before dividing.
+
+| Parameter | Value |
+|-----------|-------|
+| Retarder temp | 7–9°C (45–48°F) |
+| Duration | 12–18 h |
+| Yeast (fresh) | ~1.2% BP |
+| DDT | 23°C |
+| Placement | After mixing, before divide |
+
+After retarding: remove, divide immediately or temper ~1 h, then preshape → rest → shape → proof → bake normally. Fermentation is not completely stopped at 7–9°C — slow gas and acid production continues, preserving product quality. No dough conditioners needed with good flour. Handles high-hydration doughs (ciabatta) well. No surface blisters (retarded in bulk before shaping).
+
+**Drawback:** Requires retarder capacity for bulk dough. Bread not available immediately — 3–4 h needed after pull for divide/shape/proof/bake.
+
+#### Slow Final Proof
+
+Retard after shaping — replaces conventional proof. Bake directly from retarder.
+
+| Parameter | Value |
+|-----------|-------|
+| Retarder temp | 10°C (50°F) |
+| Duration | 12–15 h |
+| Yeast (fresh) | 0.8–1% BP |
+| DDT | 23°C |
+| Mix development | Improved → intensive |
+| Dough consistency | Slightly stiffer |
+| Placement | After shape |
+
+After mixing: 20–30 min bulk → divide → preshape → 20–30 min rest → shape → retard. At 10°C yeast produces a small amount of CO₂ slowly — after 12 h the dough has enough gas to bake directly from the retarder. Bake window: 12–15 h (same batch can be baked across a several-hour window).
+
+**Drawback:** Ascorbic acid (15–20 ppm) typically needed to reinforce gluten. Surface dehydration risk — humidifier system important.
+
+#### Retarding-Proofing Process
+
+Retard after shaping at very low temp, then warm-proof before baking.
+
+| Parameter | Value |
+|-----------|-------|
+| Retarder temp | 3–4°C (38–40°F) |
+| Duration | 12–48 h |
+| Proof after retard | Room temp, or auto-warm to 22–24°C |
+| Yeast (fresh) | 1.8–2% BP |
+| DDT | 23°C |
+| Mix development | Improved → intensive |
+| Dough consistency | Stiffer, shape tightly |
+| Placement | After shape |
+
+After mixing: 15–20 min bulk → divide → preshape → 20 min rest → shape tightly → retard. Two options: (1) remove from retarder and proof at room temp, or (2) proofer-retarder auto-warms to 22–24°C after the retarding period. Baker can have fresh bread ~1 h after arriving.
+
+**Drawback:** Dough conditioners required. Larger proofer-retarders needed. Humidity control critical — air is drier at low temps.
+
+#### Current Engine Default
+
+The engine suggests the **retarding-proofing** technique: SHAPE → RETARD (4°C, 12 h) → PROOF → BAKE. This is the most common artisan workflow. The baker can:
+- Delete RETARD for a straight (non-retarded) process
+- Adjust temperature (10°C for slow final proof, 7°C for delayed first fermentation)
+- Move RETARD earlier in the sequence (before PRESHAPE for delayed first fermentation)
+- Extend duration up to 48 h
 
 ---
 
