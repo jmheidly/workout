@@ -75,4 +75,12 @@ export const COMMON_INGREDIENTS = [
   { name: 'Dried Cranberries', category: 'MIXIN' },
   { name: 'Chocolate Chips', category: 'MIXIN' },
   { name: 'Candied Orange Peel', category: 'MIXIN' },
+
+  // Preferments
+  { name: 'Poolish', category: 'PREFERMENT' },
+  { name: 'Biga', category: 'PREFERMENT' },
+  { name: 'Levain', category: 'PREFERMENT' },
+  { name: 'Pâte Fermentée', category: 'PREFERMENT' },
+  { name: 'Sponge', category: 'PREFERMENT' },
+  { name: 'Sourdough Starter', category: 'PREFERMENT' },
 ]

@@ -223,7 +223,7 @@ export function calculateRecipe(recipe) {
   // §8: Autolyse split
   let autolyse = null
   if (recipe.autolyse) {
-    autolyse = calcAutolyseSplit(ingredients, finalDoughQtys, recipe.autolyse_duration_min || 20)
+    autolyse = calcAutolyseSplit(ingredients, finalDoughQtys, recipe.autolyse_duration_min || 20, recipe.autolyse_overrides || {})
   }
 
   return {
@@ -371,25 +371,36 @@ function calcAdjustedYield(desired, processLoss, bakeLoss) {
 
 /**
  * Split final dough ingredients into autolyse and final-mix groups.
- * FLOUR + LIQUID go into the autolyse. Everything else goes into final mix.
+ * Default: FLOUR + LIQUID → autolyse, everything else → final mix.
+ * Overrides allow bakers to drag ingredients between lists.
  *
  * @param {Ingredient[]} ingredients
  * @param {Object.<string, number>} finalDoughQtys
  * @param {number} durationMin
- * @returns {{ autolyse_ingredients: Object.<string, number>, final_mix_ingredients: Object.<string, number>, autolyse_duration_min: number }}
+ * @param {Object.<string, 'autolyse'|'final'>} [overrides={}]
+ * @returns {{ autolyse_ingredients: Array<{id: string, name: string, qty: number}>, final_mix_ingredients: Array<{id: string, name: string, qty: number}>, autolyse_duration_min: number }}
  */
-function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin) {
-  const autolyseIngredients = {}
-  const finalMixIngredients = {}
+function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides = {}) {
+  const autolyseIngredients = []
+  const finalMixIngredients = []
 
   for (const ing of ingredients) {
     const fdq = finalDoughQtys[ing.id]
     if (!fdq || fdq <= 0) continue
 
-    if (ing.category === 'FLOUR' || ing.category === 'LIQUID') {
-      autolyseIngredients[ing.name] = fdq
-    } else if (ing.category !== 'PREFERMENT') {
-      finalMixIngredients[ing.name] = fdq
+    // Preferments are never in either list
+    if (ing.category === 'PREFERMENT') continue
+
+    const item = { id: ing.id, name: ing.name, qty: fdq }
+
+    if (overrides[ing.id] === 'autolyse') {
+      autolyseIngredients.push(item)
+    } else if (overrides[ing.id] === 'final') {
+      finalMixIngredients.push(item)
+    } else if (ing.category === 'FLOUR' || ing.category === 'LIQUID') {
+      autolyseIngredients.push(item)
+    } else {
+      finalMixIngredients.push(item)
     }
   }
 

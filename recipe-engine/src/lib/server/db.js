@@ -167,6 +167,7 @@ function initSchema(db) {
     'ALTER TABLE recipes ADD COLUMN version INTEGER NOT NULL DEFAULT 1',
     'ALTER TABLE mixer_profiles ADD COLUMN bakery_id TEXT REFERENCES bakeries(id)',
     'ALTER TABLE ingredient_library ADD COLUMN bakery_id TEXT REFERENCES bakeries(id)',
+    "ALTER TABLE recipes ADD COLUMN autolyse_overrides TEXT NOT NULL DEFAULT '{}'",
   ]
   for (const sql of migrations) {
     try {
@@ -447,8 +448,8 @@ export function createRecipe(userId, bakeryId, data) {
   const recipeId = generateId()
 
   const insertRecipe = db.prepare(`
-    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type, autolyse_overrides)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const insertIngredient = db.prepare(`
@@ -479,7 +480,8 @@ export function createRecipe(userId, bakeryId, data) {
       data.autolyse ? 1 : 0,
       data.autolyse_duration_min || 20,
       data.mixer_profile_id || null,
-      data.mix_type || 'Improved Mix'
+      data.mix_type || 'Improved Mix',
+      JSON.stringify(data.autolyse_overrides || {})
     )
 
     if (data.ingredients) {
@@ -602,6 +604,7 @@ export function getRecipe(id, bakeryId) {
 
   const assembled = {
     ...recipe,
+    autolyse_overrides: JSON.parse(recipe.autolyse_overrides || '{}'),
     ingredients: ingredients.map((ing) => ({
       ...ing,
       preferment_bakers_pcts: pfBpMap[ing.id] || {},
@@ -651,7 +654,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
     db.prepare(
       `UPDATE recipes SET name = ?, yield_per_piece = ?, ddt = ?,
        process_loss_pct = ?, bake_loss_pct = ?, autolyse = ?, autolyse_duration_min = ?,
-       mixer_profile_id = ?, mix_type = ?,
+       mixer_profile_id = ?, mix_type = ?, autolyse_overrides = ?,
        version = version + 1, updated_at = datetime('now')
        WHERE id = ? AND bakery_id = ?`
     ).run(
@@ -664,6 +667,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
       data.autolyse_duration_min || 20,
       data.mixer_profile_id || null,
       data.mix_type || 'Improved Mix',
+      JSON.stringify(data.autolyse_overrides || {}),
       id,
       bakeryId
     )
@@ -770,6 +774,7 @@ export function buildRecipeSnapshot(recipe) {
     ddt: recipe.ddt,
     autolyse: recipe.autolyse,
     autolyse_duration_min: recipe.autolyse_duration_min,
+    autolyse_overrides: recipe.autolyse_overrides || {},
     mix_type: recipe.mix_type,
     mixer_profile_id: recipe.mixer_profile_id,
     process_loss_pct: recipe.process_loss_pct,
@@ -829,18 +834,31 @@ export function snapshotBeforeUpdate(recipeId, userId, changeNotes) {
  * @param {string} recipeId
  * @returns {Array<{id: string, version_number: number, change_notes: string|null, created_by: string, created_at: string, creator_name: string|null, creator_email: string}>}
  */
-export function getRecipeVersions(recipeId) {
+export function getRecipeVersions(recipeId, { limit, offset } = {}) {
   const db = getDb()
-  return db
-    .prepare(
-      `SELECT rv.id, rv.version_number, rv.change_notes, rv.created_by, rv.created_at,
+  let sql = `SELECT rv.id, rv.version_number, rv.change_notes, rv.created_by, rv.created_at,
               u.name as creator_name, u.email as creator_email
        FROM recipe_versions rv
        LEFT JOIN users u ON u.id = rv.created_by
        WHERE rv.recipe_id = ?
        ORDER BY rv.version_number DESC`
-    )
-    .all(recipeId)
+  const params = [recipeId]
+  if (limit != null) {
+    sql += ' LIMIT ?'
+    params.push(limit)
+    if (offset != null) {
+      sql += ' OFFSET ?'
+      params.push(offset)
+    }
+  }
+  return db.prepare(sql).all(...params)
+}
+
+export function getRecipeVersionCount(recipeId) {
+  const db = getDb()
+  return db
+    .prepare('SELECT COUNT(*) as count FROM recipe_versions WHERE recipe_id = ?')
+    .get(recipeId).count
 }
 
 /**

@@ -109,6 +109,7 @@
   // Autolyse (§8)
   let autolyse = $state(!!data.recipe.autolyse)
   let autolyseDurationMin = $state(data.recipe.autolyse_duration_min || 20)
+  let autolyseOverrides = $state(data.recipe.autolyse_overrides || {})
 
   // Mixer & Mix Type (§7)
   let mixerProfileId = $state(data.recipe.mixer_profile_id || '')
@@ -199,14 +200,22 @@
     const match =
       ingredientLibrary.find((e) => e.name.toLowerCase() === name) ||
       COMMON_INGREDIENTS.find((e) => e.name.toLowerCase() === name)
-    if (match) ing.category = match.category
+    if (match && match.category !== ing.category) {
+      const idx = ingredients.indexOf(ing)
+      if (idx >= 0) onCategoryChange(idx, match.category)
+    }
   }
 
   function acSelect(ing, entry) {
+    const oldCategory = ing.category
     ing.name = entry.name
-    ing.category = entry.category
     acClose()
-    onFieldChange()
+    if (entry.category !== oldCategory) {
+      const idx = ingredients.indexOf(ing)
+      if (idx >= 0) onCategoryChange(idx, entry.category)
+    } else {
+      onFieldChange()
+    }
   }
 
   function acKeydown(evt, ing) {
@@ -335,6 +344,7 @@
       bake_loss_pct: bakeLossPct,
       autolyse: autolyse ? 1 : 0,
       autolyse_duration_min: autolyseDurationMin,
+      autolyse_overrides: autolyseOverrides,
       mixer_profile_id: mixerProfileId || null,
       mix_type: mixType,
       ingredients: ingredients.map((ing, idx) => ({
@@ -364,6 +374,30 @@
 
   let savedSnapshot = $state(JSON.stringify(buildRecipeData()))
   let hasChanges = $derived(JSON.stringify(buildRecipeData()) !== savedSnapshot)
+
+  function discardChanges() {
+    const s = JSON.parse(savedSnapshot)
+    recipeName = s.name
+    yieldPerPiece = s.yield_per_piece
+    ddt = s.ddt
+    processLossPct = s.process_loss_pct || 0
+    bakeLossPct = s.bake_loss_pct || 0
+    autolyse = !!s.autolyse
+    autolyseDurationMin = s.autolyse_duration_min || 20
+    autolyseOverrides = s.autolyse_overrides || {}
+    mixerProfileId = s.mixer_profile_id || ''
+    mixType = s.mix_type || 'Improved Mix'
+    ingredients = (s.ingredients || []).map((ing) => ({
+      ...ing,
+      preferment_bakers_pcts: { ...(ing.preferment_bakers_pcts || {}) },
+      preferment_settings: ing.preferment_settings ? { ...ing.preferment_settings } : null,
+    }))
+    processSteps = (s.process_steps || []).map((step) => ({ ...step }))
+    changeNotes = ''
+    pfGrams = initPfGrams()
+    scheduleCalc()
+    toast('Changes discarded')
+  }
 
   // ── Ingredient CRUD ────────────────────────────────────────
 
@@ -638,6 +672,50 @@
     }
   }
 
+  // ── Autolyse Split Drag ──────────────────────────────────────
+
+  let autolyseListEl = $state(null)
+  let finalMixListEl = $state(null)
+
+  const autolyseSortableOpts = {
+    group: 'autolyse-split',
+    sort: false,
+    animation: 150,
+    onEnd(evt) {
+      if (evt.from === evt.to) return
+
+      const itemId = evt.item.dataset.ingredientId
+      const targetList = evt.to.dataset.listType
+
+      // Revert DOM — let Svelte re-render from state
+      evt.from.insertBefore(evt.item, evt.from.children[evt.oldIndex] || null)
+
+      // Sparse overrides: only store non-default positions
+      const ing = ingredients.find((i) => i.id === itemId)
+      const engineDefault =
+        ing?.category === 'FLOUR' || ing?.category === 'LIQUID'
+          ? 'autolyse'
+          : 'final'
+
+      if (targetList === engineDefault) {
+        const { [itemId]: _, ...rest } = autolyseOverrides
+        autolyseOverrides = rest
+      } else {
+        autolyseOverrides = { ...autolyseOverrides, [itemId]: targetList }
+      }
+
+      scheduleCalc()
+    },
+  }
+
+  useSortable(() => autolyseListEl, autolyseSortableOpts)
+  useSortable(() => finalMixListEl, autolyseSortableOpts)
+
+  function resetAutolyseOverrides() {
+    autolyseOverrides = {}
+    scheduleCalc()
+  }
+
   // ── Lookup Helpers ─────────────────────────────────────────
 
   function getCalc(ingId) {
@@ -730,16 +808,12 @@
         `Autolyse Split (${calculated.autolyse.autolyse_duration_min} min)`,
       ])
       rows.push(['Autolyse Ingredients'])
-      for (const [name, qty] of Object.entries(
-        calculated.autolyse.autolyse_ingredients
-      )) {
-        rows.push([name, qty.toFixed(2)])
+      for (const item of calculated.autolyse.autolyse_ingredients) {
+        rows.push([item.name, item.qty.toFixed(2)])
       }
       rows.push(['Final Mix Ingredients'])
-      for (const [name, qty] of Object.entries(
-        calculated.autolyse.final_mix_ingredients
-      )) {
-        rows.push([name, qty.toFixed(2)])
+      for (const item of calculated.autolyse.final_mix_ingredients) {
+        rows.push([item.name, item.qty.toFixed(2)])
       }
     }
 
@@ -850,6 +924,12 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Production
     </Button>
+
+    {#if hasChanges}
+      <Button variant="ghost" size="sm" onclick={discardChanges} class="text-muted-foreground">
+        Discard
+      </Button>
+    {/if}
 
     {#if data.canEdit}
       <form
@@ -1490,20 +1570,36 @@
             <Badge variant="secondary" class="bg-teal-50 text-teal-700 font-normal">
               {calculated.autolyse.autolyse_duration_min} min rest
             </Badge>
+            {#if Object.keys(autolyseOverrides).length > 0}
+              <Button variant="ghost" size="sm" onclick={resetAutolyseOverrides} class="ml-auto text-xs text-muted-foreground">
+                Reset to defaults
+              </Button>
+            {/if}
           </CardTitle>
+          <p class="text-xs text-muted-foreground mt-1">Drag ingredients between lists to customize the split</p>
         </CardHeader>
         <CardContent>
           <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div>
               <h3 class="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-teal-700">
                 <span class="inline-block h-2 w-2 rounded-full bg-teal-500"></span>
-                Autolyse Mix (Flour + Liquid)
+                Autolyse Mix
               </h3>
-              <div class="space-y-1">
-                {#each Object.entries(calculated.autolyse.autolyse_ingredients) as [name, qty]}
-                  <div class="flex items-center justify-between rounded-md bg-teal-50/50 px-3 py-1.5 text-sm">
-                    <span class="font-medium">{name}</span>
-                    <span class="tabular-nums text-muted-foreground">{formatGrams(qty)}</span>
+              <div
+                bind:this={autolyseListEl}
+                data-list-type="autolyse"
+                class="min-h-[3rem] space-y-1 rounded-lg border-2 border-dashed border-teal-200 p-2"
+              >
+                {#each calculated.autolyse.autolyse_ingredients as item (item.id)}
+                  <div
+                    data-ingredient-id={item.id}
+                    class="flex cursor-grab items-center justify-between rounded-md bg-teal-50/50 px-3 py-1.5 text-sm active:cursor-grabbing"
+                  >
+                    <span class="flex items-center gap-1.5 font-medium">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-teal-400"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                      {item.name}
+                    </span>
+                    <span class="tabular-nums text-muted-foreground">{formatGrams(item.qty)}</span>
                   </div>
                 {/each}
               </div>
@@ -1513,11 +1609,21 @@
                 <span class="inline-block h-2 w-2 rounded-full bg-orange-500"></span>
                 Final Mix (after rest)
               </h3>
-              <div class="space-y-1">
-                {#each Object.entries(calculated.autolyse.final_mix_ingredients) as [name, qty]}
-                  <div class="flex items-center justify-between rounded-md bg-orange-50/50 px-3 py-1.5 text-sm">
-                    <span class="font-medium">{name}</span>
-                    <span class="tabular-nums text-muted-foreground">{formatGrams(qty)}</span>
+              <div
+                bind:this={finalMixListEl}
+                data-list-type="final"
+                class="min-h-[3rem] space-y-1 rounded-lg border-2 border-dashed border-orange-200 p-2"
+              >
+                {#each calculated.autolyse.final_mix_ingredients as item (item.id)}
+                  <div
+                    data-ingredient-id={item.id}
+                    class="flex cursor-grab items-center justify-between rounded-md bg-orange-50/50 px-3 py-1.5 text-sm active:cursor-grabbing"
+                  >
+                    <span class="flex items-center gap-1.5 font-medium">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-400"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                      {item.name}
+                    </span>
+                    <span class="tabular-nums text-muted-foreground">{formatGrams(item.qty)}</span>
                   </div>
                 {/each}
               </div>
