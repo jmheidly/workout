@@ -9,6 +9,7 @@
 
   const routeLabels = {
     recipes: 'Recipes',
+    templates: 'Templates',
     production: 'Production',
     inventory: 'Inventory',
     reports: 'Reports',
@@ -17,6 +18,7 @@
     bakeries: 'Bakery',
     members: 'Members',
     versions: 'Version History',
+    new: 'New',
   }
 
   function resolveLabel(seg, segments, index) {

@@ -13,7 +13,7 @@
 9. [Production Timeline & Fermentation Schedule](#9-production-timeline--fermentation-schedule)
 10. [Process / Method Steps](#10-process--method-steps)
 11. [Loss & Waste Factor](#11-loss--waste-factor)
-12. [Recipe Versioning](#12-recipe-versioning)
+12. Recipe Versioning — see [versioning.md](versioning.md)
 13. [Complete Formula Reference](#13-complete-formula-reference)
 14. [Seed Recipes](#14-seed-recipes)
 15. [Dough Type System](#15-dough-type-system)
@@ -1594,134 +1594,9 @@ When the production module tracks batch sessions, loss factors become data-drive
 
 ## 12. Recipe Versioning
 
-### 12.1 Save with Version
+**Moved to standalone spec:** [versioning.md](versioning.md)
 
-```python
-def save_recipe(recipe, change_notes):
-    recipe.version += 1
-    recipe.updated_at = now()
-    version = RecipeVersion(
-        recipe_id=recipe.id,
-        version_number=recipe.version,
-        snapshot=serialize(recipe),
-        change_notes=change_notes,
-        created_at=now(),
-    )
-    db.save(recipe)
-    db.save(version)
-```
-
-### 12.2 Diff Between Versions
-
-**Critical: Match ingredients by UUID, not by name.** Name-based matching breaks when a baker renames "WW Flour" → "Whole Wheat Flour" — the system would incorrectly log a removal + addition instead of a rename.
-
-```python
-def diff_versions(version_a, version_b):
-    a = deserialize(version_a.snapshot)
-    b = deserialize(version_b.snapshot)
-    changes = []
-
-    # Build lookup by stable UUID
-    a_by_id = {i.id: i for i in a.ingredients}
-    b_by_id = {i.id: i for i in b.ingredients}
-
-    a_ids = set(a_by_id.keys())
-    b_ids = set(b_by_id.keys())
-
-    # Truly new ingredients (UUID not in previous version)
-    for uid in b_ids - a_ids:
-        ing = b_by_id[uid]
-        changes.append({"type": "added", "ingredient_id": uid, "name": ing.name})
-
-    # Truly removed ingredients (UUID not in new version)
-    for uid in a_ids - b_ids:
-        ing = a_by_id[uid]
-        changes.append({"type": "removed", "ingredient_id": uid, "name": ing.name})
-
-    # Existing ingredients — check for modifications
-    for uid in a_ids & b_ids:
-        ing_a = a_by_id[uid]
-        ing_b = b_by_id[uid]
-
-        # Detect rename
-        if ing_a.name != ing_b.name:
-            changes.append({
-                "type": "renamed", "ingredient_id": uid,
-                "old_name": ing_a.name, "new_name": ing_b.name,
-            })
-
-        # Detect field changes
-        for field in ["base_qty", "category", "sort_order"]:
-            old_val = getattr(ing_a, field)
-            new_val = getattr(ing_b, field)
-            if old_val != new_val:
-                changes.append({
-                    "type": "modified", "ingredient_id": uid,
-                    "name": ing_b.name, "field": field,
-                    "old": old_val, "new": new_val,
-                })
-
-        # Compare pre-ferment Baker's % changes
-        all_pf_ids = set(
-            list(ing_a.preferment_bakers_pcts.keys()) +
-            list(ing_b.preferment_bakers_pcts.keys())
-        )
-        for pf_id in all_pf_ids:
-            old_val = ing_a.preferment_bakers_pcts.get(pf_id)
-            new_val = ing_b.preferment_bakers_pcts.get(pf_id)
-            if old_val != new_val:
-                changes.append({
-                    "type": "modified", "ingredient_id": uid,
-                    "name": ing_b.name,
-                    "field": f"preferment_{pf_id}_bakers_pct",
-                    "old": old_val, "new": new_val,
-                })
-
-        # Compare pre-ferment settings (type, DDT, fermentation duration)
-        a_ps = getattr(ing_a, "preferment_settings", None)
-        b_ps = getattr(ing_b, "preferment_settings", None)
-        if a_ps or b_ps:
-            for field in ["type", "ddt", "fermentation_duration_min"]:
-                old_val = getattr(a_ps, field, None) if a_ps else None
-                new_val = getattr(b_ps, field, None) if b_ps else None
-                if old_val != new_val:
-                    changes.append({
-                        "type": "modified", "ingredient_id": uid,
-                        "name": ing_b.name, "field": f"pf_{field}",
-                        "old": old_val, "new": new_val,
-                    })
-
-    # Global params
-    for field in ["yield_per_piece", "ddt", "autolyse", "autolyse_duration_min",
-                   "autolyse_overrides", "process_loss_pct", "bake_loss_pct"]:
-        old_val = getattr(a, field, None)
-        new_val = getattr(b, field, None)
-        if old_val != new_val:
-            changes.append({
-                "type": "param_changed", "field": field,
-                "old": old_val, "new": new_val,
-            })
-
-    return changes
-```
-
-**Key rules:**
-
-- Ingredient identity = UUID, assigned at creation, never changes
-- Renaming an ingredient does NOT change its UUID
-- Diff detects renames as a distinct change type ("renamed"), not remove + add
-- Pre-ferment Baker's % changes tracked per-ingredient per-pre-ferment
-- Pre-ferment settings (type, DDT, fermentation duration) tracked per-ingredient with `pf_` prefix
-- `autolyse_overrides` compared via deep equality (JSON.stringify), not reference equality
-
-### 12.3 Version History Pagination
-
-Version lists are paginated server-side using SQLite `LIMIT ? OFFSET ?`:
-
-- **Page size:** 10 versions per page
-- **URL-driven:** `?page=N` query parameter (default: 1)
-- **Change summaries:** Computed per-page; the oldest item on each page diffs against the next older version (fetched separately)
-- **Current version:** Only displayed on page 1 (it lives above the version list)
+Covers: snapshot system, diff engine (UUID-matched ingredients/steps/companions), change summaries, server-side pagination, timeline UI, and side-by-side comparison.
 
 ---
 
@@ -2162,9 +2037,20 @@ ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT
 
 **Companions are excluded** from the Ingredients table per BBGA convention — they are separate preparations with their own formulas, not dough ingredients. They are managed in the Accompanied Recipes card.
 
-### §16.7 Future — Phase 3: Reusable Sub-Recipe Library
+### §16.7 Phase 3: Reusable Sub-Recipe Library (Implemented)
 
-- Baker defines sub-recipes (PFs, fillings, glazes) once in a template library
-- Templates can be linked from multiple parent recipes
-- Copy-on-link with update notification (not live references)
-- Requires §12 versioning for template version tracking
+Baker defines sub-recipes (PFs, fillings, glazes) once in a **template library** and links them from multiple parent recipes. Copy-on-link with explicit update pull — no auto-propagation.
+
+- **Template** = thin metadata row (`recipe_templates`) pointing to a normal recipe that holds the formula
+- **Template types**: `preferment`, `intermediate_dough`, `filling`, `glaze`, `garnish`, `other`
+- **PF linking**: "From Library..." dropdown on PF cards copies the template's formula (baker's pcts, settings, process steps) and tracks `source_template_id` + `source_version`
+- **Companion linking**: template library section in companion add dropdown links the backing recipe with source tracking
+- **Stale detection**: when the template's backing recipe version > `source_version`, a prominent amber alert banner appears with:
+  - "Review changes" link → version comparison page for the template recipe
+  - PFs: "Pull update" button re-copies the latest formula
+  - Companions: "Acknowledge" button clears the stale indicator (companion is already a live link)
+- **Template deletion**: `source_template_id` set to NULL via ON DELETE SET NULL; linked recipes keep their local copy (shown with "Local copy" badge)
+- **Library UI**: `/(app)/templates/` with search, card grid, type badges, used-in counts; `/(app)/templates/new/` for create or promote existing recipe
+- **Versioning integration**: `source_template_id`/`source_version` included in snapshots and diffs; change summaries show template link/unlink/sync events
+
+Full specification: `accompanied-recipes.md` §5.

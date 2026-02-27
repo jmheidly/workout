@@ -7,6 +7,10 @@ import {
   getRecipeVersionCount,
   getRecipesByBakery,
   getParentsForRecipe,
+  getPfTemplates,
+  getCompanionTemplates,
+  getStaleTemplateLinks,
+  getTemplate,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
@@ -44,6 +48,9 @@ export function load({ params, locals }) {
   }
 
   const usedInRecipes = getParentsForRecipe(params.id)
+  const pfTemplates = getPfTemplates(locals.bakery.id)
+  const companionTemplates = getCompanionTemplates(locals.bakery.id)
+  const staleLinks = getStaleTemplateLinks(params.id, locals.bakery.id)
 
   return {
     recipe,
@@ -53,12 +60,42 @@ export function load({ params, locals }) {
     bakeryRecipes,
     companionDetails,
     usedInRecipes,
+    pfTemplates,
+    companionTemplates,
+    staleLinks,
     canEdit: locals.bakery.role !== 'viewer',
   }
 }
 
 /** @type {import('./$types').Actions} */
 export const actions = {
+  pullTemplate: async ({ request, params, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
+    const form = await request.formData()
+    const templateId = form.get('template_id')?.toString()
+    if (!templateId) return fail(400, { error: 'Missing template ID' })
+
+    const template = getTemplate(templateId, locals.bakery.id)
+    if (!template) return fail(404, { error: 'Template not found' })
+
+    // Load the template's backing recipe
+    const templateRecipe = getRecipe(template.recipe_id, locals.bakery.id)
+    if (!templateRecipe) return fail(404, { error: 'Template recipe not found' })
+
+    return {
+      templateData: {
+        templateId: template.id,
+        templateName: template.name,
+        recipeVersion: template.recipe_version,
+        ingredients: templateRecipe.ingredients || [],
+        process_steps: templateRecipe.process_steps || [],
+        ddt: templateRecipe.ddt,
+        dough_type: templateRecipe.dough_type,
+        mix_type: templateRecipe.mix_type,
+      },
+    }
+  },
+
   save: async ({ request, params, locals }) => {
     requireRole(locals, 'owner', 'admin', 'member')
     const form = await request.formData()
@@ -111,6 +148,8 @@ export const actions = {
       }
     }
 
+    const staleLinks = getStaleTemplateLinks(params.id, locals.bakery.id)
+
     return {
       success: true,
       recipe,
@@ -118,6 +157,7 @@ export const actions = {
       ingredientLibrary,
       versionCount,
       companionDetails,
+      staleLinks,
     }
   },
 }

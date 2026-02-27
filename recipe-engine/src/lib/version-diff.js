@@ -141,7 +141,7 @@ export function diffVersions(snapshotA, snapshotB) {
     const aPs = a.preferment_settings || null
     const bPs = b.preferment_settings || null
     if (aPs || bPs) {
-      for (const field of ['type', 'ddt', 'fermentation_duration_min']) {
+      for (const field of ['type', 'ddt', 'fermentation_duration_min', 'source_template_id', 'source_version']) {
         const oldVal = aPs?.[field] ?? null
         const newVal = bPs?.[field] ?? null
         if (oldVal !== newVal) {
@@ -378,6 +378,20 @@ export function summarizeChanges(changes) {
         .join(', ')
     )
   }
+
+  // PF template link/unlink/sync
+  const pfTemplateLinked = modified.filter(
+    (c) => c.field === 'pf_source_template_id' && !c.old && c.new
+  )
+  const pfTemplateUnlinked = modified.filter(
+    (c) => c.field === 'pf_source_template_id' && c.old && !c.new
+  )
+  const pfTemplateSynced = modified.filter(
+    (c) => c.field === 'pf_source_version' && c.old && c.new && c.old !== c.new
+  )
+  if (pfTemplateLinked.length) parts.push(`Linked ${pfTemplateLinked.length} PF${pfTemplateLinked.length > 1 ? 's' : ''} from template`)
+  if (pfTemplateUnlinked.length) parts.push(`Unlinked ${pfTemplateUnlinked.length} PF${pfTemplateUnlinked.length > 1 ? 's' : ''} from template`)
+  if (pfTemplateSynced.length) parts.push(`Synced ${pfTemplateSynced.length} PF${pfTemplateSynced.length > 1 ? 's' : ''} from template`)
 
   // Step changes
   if (stepsAdded.length) {

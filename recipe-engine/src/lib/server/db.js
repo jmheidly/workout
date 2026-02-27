@@ -158,6 +158,29 @@ function initSchema(db) {
       notes TEXT,
       UNIQUE(recipe_id, companion_recipe_id)
     );
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE,
+      otp_code TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_otp ON password_reset_tokens(otp_code);
+
+    CREATE TABLE IF NOT EXISTS recipe_templates (
+      id TEXT PRIMARY KEY,
+      bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      template_type TEXT NOT NULL DEFAULT 'preferment',
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_recipe_templates_bakery ON recipe_templates(bakery_id);
+    CREATE INDEX IF NOT EXISTS idx_recipe_templates_recipe ON recipe_templates(recipe_id);
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -182,6 +205,11 @@ function initSchema(db) {
     "ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'",
     'ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT REFERENCES recipe_ingredients(id) ON DELETE CASCADE',
     'ALTER TABLE recipe_companions ADD COLUMN qty REAL NOT NULL DEFAULT 0',
+    "ALTER TABLE bakeries ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'",
+    'ALTER TABLE preferment_settings ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL',
+    'ALTER TABLE preferment_settings ADD COLUMN source_version INTEGER',
+    'ALTER TABLE recipe_companions ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL',
+    'ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER',
   ]
   for (const sql of migrations) {
     try {
@@ -771,8 +799,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
          VALUES (?, ?, ?)`
       )
       const insertPfSettings = db.prepare(
-        `INSERT INTO preferment_settings (ingredient_id, enabled, type, ddt, fermentation_duration_min)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO preferment_settings (ingredient_id, enabled, type, ddt, fermentation_duration_min, source_template_id, source_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
 
       // First pass: insert all ingredients
@@ -794,7 +822,9 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
             ing.preferment_settings.enabled ? 1 : 0,
             ing.preferment_settings.type || 'CUSTOM',
             ing.preferment_settings.ddt ?? null,
-            ing.preferment_settings.fermentation_duration_min ?? null
+            ing.preferment_settings.fermentation_duration_min ?? null,
+            ing.preferment_settings.source_template_id || null,
+            ing.preferment_settings.source_version ?? null
           )
         }
       }
@@ -849,8 +879,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
     db.prepare('DELETE FROM recipe_companions WHERE recipe_id = ?').run(id)
     if (data.companions?.length) {
       const insertComp = db.prepare(
-        `INSERT INTO recipe_companions (id, recipe_id, companion_recipe_id, role, sort_order, notes, qty)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO recipe_companions (id, recipe_id, companion_recipe_id, role, sort_order, notes, qty, source_template_id, source_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       for (const [idx, c] of data.companions.entries()) {
         // Defense in depth: prevent self-link
@@ -867,7 +897,9 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
           c.role || 'other',
           idx,
           c.notes || null,
-          c.qty || 0
+          c.qty || 0,
+          c.source_template_id || null,
+          c.source_version ?? null
         )
       }
     }
@@ -882,6 +914,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
  */
 export function deleteRecipe(id, bakeryId) {
   const db = getDb()
+  // Backing recipe deleted = template deleted
+  db.prepare('DELETE FROM recipe_templates WHERE recipe_id = ? AND bakery_id = ?').run(id, bakeryId)
   db.prepare('DELETE FROM recipes WHERE id = ? AND bakery_id = ?').run(
     id,
     bakeryId
@@ -938,6 +972,8 @@ export function buildRecipeSnapshot(recipe) {
       sort_order: c.sort_order,
       notes: c.notes,
       qty: c.qty || 0,
+      source_template_id: c.source_template_id || null,
+      source_version: c.source_version ?? null,
     })),
   }
 }
@@ -1303,11 +1339,39 @@ export function updateBakery(id, fields) {
   )
 }
 
+/** @param {string} bakeryId */
+export function getBakerySettings(bakeryId) {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT settings FROM bakeries WHERE id = ?')
+    .get(bakeryId)
+  try {
+    return row?.settings ? JSON.parse(row.settings) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * @param {string} bakeryId
+ * @param {Record<string, any>} patch — keys to merge into existing settings
+ */
+export function updateBakerySettings(bakeryId, patch) {
+  const db = getDb()
+  const current = getBakerySettings(bakeryId)
+  const merged = { ...current, ...patch }
+  db.prepare('UPDATE bakeries SET settings = ? WHERE id = ?').run(
+    JSON.stringify(merged),
+    bakeryId
+  )
+}
+
 /** @param {string} id */
 export function deleteBakery(id) {
   const db = getDb()
   const txn = db.transaction(() => {
     // Domain tables lack ON DELETE CASCADE on bakery_id, so delete explicitly
+    db.prepare('DELETE FROM recipe_templates WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM recipes WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM mixer_profiles WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM ingredient_library WHERE bakery_id = ?').run(id)
@@ -1488,4 +1552,331 @@ export function deleteInvitation(id, bakeryId) {
     id,
     bakeryId
   )
+}
+
+// ─── Recipe Templates ─────────────────────────────────────────────────────
+
+/**
+ * @param {string} bakeryId
+ * @param {string} name
+ * @param {string} templateType
+ * @param {string} recipeId
+ * @returns {string} template id
+ */
+export function createTemplate(bakeryId, name, templateType, recipeId) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare(
+    `INSERT INTO recipe_templates (id, bakery_id, name, template_type, recipe_id)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(id, bakeryId, name, templateType, recipeId)
+  return id
+}
+
+/**
+ * List templates for a bakery with recipe info and used-in counts.
+ * @param {string} bakeryId
+ * @returns {Array<object>}
+ */
+export function getTemplatesByBakery(bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rt.*,
+              r.name as recipe_name, r.version as recipe_version, r.updated_at as recipe_updated_at,
+              (SELECT COUNT(*) FROM preferment_settings ps
+               JOIN recipe_ingredients ri ON ri.id = ps.ingredient_id
+               WHERE ps.source_template_id = rt.id) as pf_usage_count,
+              (SELECT COUNT(*) FROM recipe_companions rc
+               WHERE rc.source_template_id = rt.id) as companion_usage_count
+       FROM recipe_templates rt
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE rt.bakery_id = ?
+       ORDER BY rt.updated_at DESC`
+    )
+    .all(bakeryId)
+}
+
+/**
+ * @param {string} templateId
+ * @param {string} bakeryId
+ * @returns {object | undefined}
+ */
+export function getTemplate(templateId, bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rt.*, r.name as recipe_name, r.version as recipe_version
+       FROM recipe_templates rt
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE rt.id = ? AND rt.bakery_id = ?`
+    )
+    .get(templateId, bakeryId)
+}
+
+/**
+ * @param {string} templateId
+ * @param {string} bakeryId
+ * @param {{ name?: string, template_type?: string }} fields
+ */
+export function updateTemplate(templateId, bakeryId, fields) {
+  const db = getDb()
+  const sets = []
+  const values = []
+  if (fields.name !== undefined) {
+    sets.push('name = ?')
+    values.push(fields.name)
+  }
+  if (fields.template_type !== undefined) {
+    sets.push('template_type = ?')
+    values.push(fields.template_type)
+  }
+  if (sets.length === 0) return
+  sets.push("updated_at = datetime('now')")
+  values.push(templateId, bakeryId)
+  db.prepare(
+    `UPDATE recipe_templates SET ${sets.join(', ')} WHERE id = ? AND bakery_id = ?`
+  ).run(...values)
+}
+
+/**
+ * @param {string} templateId
+ * @param {string} bakeryId
+ */
+export function deleteTemplate(templateId, bakeryId) {
+  const db = getDb()
+  db.prepare('DELETE FROM recipe_templates WHERE id = ? AND bakery_id = ?').run(
+    templateId,
+    bakeryId
+  )
+}
+
+/**
+ * Promote an existing recipe to a template.
+ * @param {string} bakeryId
+ * @param {string} recipeId
+ * @param {string} templateType
+ * @returns {string} template id
+ */
+export function promoteRecipeToTemplate(bakeryId, recipeId, templateType) {
+  const db = getDb()
+  const recipe = db
+    .prepare('SELECT id, name FROM recipes WHERE id = ? AND bakery_id = ?')
+    .get(recipeId, bakeryId)
+  if (!recipe) return null
+  // Check if already a template
+  const existing = db
+    .prepare('SELECT id FROM recipe_templates WHERE recipe_id = ? AND bakery_id = ?')
+    .get(recipeId, bakeryId)
+  if (existing) return existing.id
+  return createTemplate(bakeryId, recipe.name, templateType, recipeId)
+}
+
+/**
+ * Get all recipes referencing this template (PF + companion links).
+ * @param {string} templateId
+ * @returns {Array<{recipe_id: string, recipe_name: string, link_type: string}>}
+ */
+export function getTemplateUsages(templateId) {
+  const db = getDb()
+  const pfUsages = db
+    .prepare(
+      `SELECT DISTINCT r.id as recipe_id, r.name as recipe_name, 'preferment' as link_type
+       FROM preferment_settings ps
+       JOIN recipe_ingredients ri ON ri.id = ps.ingredient_id
+       JOIN recipes r ON r.id = ri.recipe_id
+       WHERE ps.source_template_id = ?`
+    )
+    .all(templateId)
+  const compUsages = db
+    .prepare(
+      `SELECT DISTINCT r.id as recipe_id, r.name as recipe_name, 'companion' as link_type
+       FROM recipe_companions rc
+       JOIN recipes r ON r.id = rc.recipe_id
+       WHERE rc.source_template_id = ?`
+    )
+    .all(templateId)
+  return [...pfUsages, ...compUsages]
+}
+
+/**
+ * Templates suitable for PF linking.
+ * @param {string} bakeryId
+ * @returns {Array<object>}
+ */
+export function getPfTemplates(bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rt.id, rt.name, rt.template_type, rt.recipe_id,
+              r.version as recipe_version
+       FROM recipe_templates rt
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE rt.bakery_id = ?
+         AND rt.template_type IN ('preferment', 'intermediate_dough')
+       ORDER BY rt.name`
+    )
+    .all(bakeryId)
+}
+
+/**
+ * Templates suitable for companion linking.
+ * @param {string} bakeryId
+ * @returns {Array<object>}
+ */
+export function getCompanionTemplates(bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rt.id, rt.name, rt.template_type, rt.recipe_id,
+              r.version as recipe_version
+       FROM recipe_templates rt
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE rt.bakery_id = ?
+         AND rt.template_type IN ('filling', 'glaze', 'garnish', 'other')
+       ORDER BY rt.name`
+    )
+    .all(bakeryId)
+}
+
+/**
+ * Get stale PF and companion links for a recipe (template version > source_version).
+ * @param {string} recipeId
+ * @param {string} bakeryId
+ * @returns {{ stalePfs: Array<object>, staleCompanions: Array<object> }}
+ */
+export function getStaleTemplateLinks(recipeId, bakeryId) {
+  const db = getDb()
+  const stalePfs = db
+    .prepare(
+      `SELECT ps.ingredient_id, ps.source_template_id, ps.source_version,
+              rt.name as template_name, rt.recipe_id as template_recipe_id, r.version as current_version
+       FROM preferment_settings ps
+       JOIN recipe_ingredients ri ON ri.id = ps.ingredient_id
+       JOIN recipe_templates rt ON rt.id = ps.source_template_id
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE ri.recipe_id = ? AND ps.source_template_id IS NOT NULL
+         AND r.version > ps.source_version`
+    )
+    .all(recipeId)
+  const staleCompanions = db
+    .prepare(
+      `SELECT rc.id, rc.companion_recipe_id, rc.source_template_id, rc.source_version,
+              rt.name as template_name, rt.recipe_id as template_recipe_id, r.version as current_version
+       FROM recipe_companions rc
+       JOIN recipe_templates rt ON rt.id = rc.source_template_id
+       JOIN recipes r ON r.id = rt.recipe_id
+       WHERE rc.recipe_id = ? AND rc.source_template_id IS NOT NULL
+         AND r.version > rc.source_version`
+    )
+    .all(recipeId)
+  return { stalePfs, staleCompanions }
+}
+
+/**
+ * Check if a recipe backs a template.
+ * @param {string} recipeId
+ * @param {string} bakeryId
+ * @returns {object | undefined}
+ */
+export function getTemplateForRecipe(recipeId, bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      'SELECT id, name, template_type FROM recipe_templates WHERE recipe_id = ? AND bakery_id = ?'
+    )
+    .get(recipeId, bakeryId)
+}
+
+// ─── Password Reset Tokens ───────────────────────────────────────────────────
+
+/**
+ * @param {string} userId
+ * @param {string} token
+ * @param {string} otpCode
+ * @param {string} expiresAt
+ */
+export function createPasswordResetToken(userId, token, otpCode, expiresAt) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare(
+    'INSERT INTO password_reset_tokens (id, user_id, token, otp_code, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, userId, token, otpCode, expiresAt)
+  return { id, user_id: userId, token, otp_code: otpCode, expires_at: expiresAt }
+}
+
+/** @param {string} token */
+export function getPasswordResetToken(token) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM password_reset_tokens WHERE token = ?')
+    .get(token)
+}
+
+/** @param {string} otpCode */
+export function getPasswordResetByOtp(otpCode) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM password_reset_tokens WHERE otp_code = ?')
+    .get(otpCode)
+}
+
+/** @param {string} id */
+export function markPasswordResetTokenUsed(id) {
+  const db = getDb()
+  db.prepare(
+    "UPDATE password_reset_tokens SET used_at = datetime('now') WHERE id = ?"
+  ).run(id)
+}
+
+/**
+ * @param {string} userId
+ * @param {string} passwordHash
+ */
+export function updateUserPassword(userId, passwordHash) {
+  const db = getDb()
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+    passwordHash,
+    userId
+  )
+}
+
+/**
+ * Delete a user and cascade-clean all related data.
+ * Bakeries where the user is the sole owner are also deleted.
+ * @param {string} userId
+ */
+export function deleteUser(userId) {
+  const db = getDb()
+  const txn = db.transaction(() => {
+    // 1. Find bakeries where this user is the sole owner and delete them
+    const bakeries = getUserBakeries(userId)
+    for (const b of bakeries) {
+      if (b.role === 'owner') {
+        const ownerCount = db
+          .prepare(
+            "SELECT COUNT(*) as count FROM bakery_members WHERE bakery_id = ? AND role = 'owner'"
+          )
+          .get(b.id).count
+        if (ownerCount === 1) {
+          deleteBakery(b.id)
+        }
+      }
+    }
+
+    // 2. Remove user from all remaining bakeries
+    db.prepare('DELETE FROM bakery_members WHERE user_id = ?').run(userId)
+
+    // 3. Delete user sessions
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+
+    // 4. Delete password reset tokens
+    db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(
+      userId
+    )
+
+    // 5. Delete user record (ON DELETE CASCADE handles any remaining FKs)
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId)
+  })
+  txn()
 }

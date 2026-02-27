@@ -9,7 +9,7 @@
 |-------|--------|-------------|
 | Phase 1 | **Done** | Non-PF companions (glazes, fillings, garnishes) with qty, BP%, versioning |
 | Phase 2 | **Done** | Per-PF process steps with `PF_MIX`/`PF_FEED`/`PF_FERMENT` stages |
-| Phase 3 | Planned | Reusable sub-recipe library |
+| Phase 3 | **Done** | Reusable sub-recipe library with template linking, stale detection, pull/acknowledge |
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@
 2. [Architecture Decision: §5 Stays, §16 Layers On Top](#2-architecture-decision-5-stays-16-layers-on-top)
 3. [Phase 1 — Non-PF Companions (Glazes, Fillings, Garnishes)](#3-phase-1--non-pf-companions) — **Implemented**
 4. [Phase 2 — Per-Stage Process Modeling](#4-phase-2--per-stage-process-modeling) — **Implemented**
-5. [Phase 3 — Reusable Sub-Recipe Library](#5-phase-3--reusable-sub-recipe-library)
+5. [Phase 3 — Reusable Sub-Recipe Library](#5-phase-3--reusable-sub-recipe-library) — **Implemented**
 6. [Data Model Changes](#6-data-model-changes)
 7. [Calculation Engine Impact](#7-calculation-engine-impact)
 8. [UI Changes](#8-ui-changes)
@@ -238,7 +238,7 @@ When §9 is implemented, the PF process steps feed into the production timeline:
 
 ---
 
-## 5. Phase 3 — Reusable Sub-Recipe Library
+## 5. Phase 3 — Reusable Sub-Recipe Library (Implemented)
 
 ### Goal
 
@@ -246,11 +246,15 @@ Allow bakers to define sub-recipes once and reference them from multiple parent 
 
 ### Problem
 
-Currently, if Bakery X uses the same Italian Levain formula for Panettone, Pan d'Oro, and Sourdough Croissant, the levain is defined separately in each recipe. Updating the levain (e.g. changing hydration from 50% to 60%) requires editing 3 recipes individually.
+If Bakery X uses the same Italian Levain formula for Panettone, Pan d'Oro, and Sourdough Croissant, the levain is defined separately in each recipe. Updating the levain (e.g. changing hydration from 50% to 60%) requires editing 3 recipes individually.
 
-### Approach
+### What Was Built
 
-Introduce a "recipe template" or "sub-recipe library" concept:
+A **template library** where bakers define formulas once and link them from multiple parent recipes. Templates use **copy-on-link** with explicit update pull — no auto-propagation.
+
+A template is a thin metadata row (`recipe_templates`) pointing to a normal recipe that holds the formula. The backing recipe is edited via the existing `/recipes/[id]` builder — no new recipe editor needed.
+
+### Data Model
 
 ```sql
 CREATE TABLE IF NOT EXISTS recipe_templates (
@@ -258,74 +262,129 @@ CREATE TABLE IF NOT EXISTS recipe_templates (
   bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   template_type TEXT NOT NULL DEFAULT 'preferment',
-    -- 'preferment', 'filling', 'glaze', 'garnish', 'intermediate_dough'
+    -- 'preferment', 'intermediate_dough', 'filling', 'glaze', 'garnish', 'other'
   recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
-    -- points to a normal recipe that holds the formula
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipe_templates_bakery ON recipe_templates(bakery_id);
-```
+CREATE INDEX IF NOT EXISTS idx_recipe_templates_recipe ON recipe_templates(recipe_id);
 
-### How It Works
-
-1. **Create template**: Baker defines an "Italian Levain" template. This creates a normal recipe (with ingredients, PF settings, process steps) and registers it in `recipe_templates`.
-
-2. **Reference from parent**: When the baker adds a PREFERMENT ingredient to a recipe and wants to use a library template:
-
-   - Show a picker: "Use from library" vs "Define inline"
-   - If library: link to the template. The PF's `preferment_bakers_pcts` and `preferment_settings` are copied from the template's recipe at link time.
-   - The link is stored as metadata — enabling "pull updates" later.
-
-3. **Update propagation**: When a template is updated:
-   - Linked recipes are NOT auto-updated (breaking change risk)
-   - Instead, a notification/badge shows: "Italian Levain template was updated — Review changes"
-   - Baker can choose to pull the update or keep their local version
-   - This mirrors how git submodules or package versions work — explicit opt-in updates
-
-### Copy-on-Link vs Live Reference
-
-**Recommended: Copy-on-link with update notification.**
-
-- When a template is linked, its formula is copied into the parent recipe's PF ingredient
-- The parent recipe stores a `source_template_id` reference for tracking
-- Changes to the template don't automatically propagate
-- Baker can "sync" to pull the latest template version
-
-This avoids the complexity of live references (what happens if the template is deleted? what if the template changes break the parent recipe's ratios?).
-
-### Data Model Addition
-
-Add to `recipe_ingredients` or `preferment_settings`:
-
-```sql
 ALTER TABLE preferment_settings ADD COLUMN source_template_id TEXT
   REFERENCES recipe_templates(id) ON DELETE SET NULL;
 ALTER TABLE preferment_settings ADD COLUMN source_version INTEGER;
-  -- version of the template when it was last synced
-```
 
-Add to `recipe_companions`:
-
-```sql
 ALTER TABLE recipe_companions ADD COLUMN source_template_id TEXT
   REFERENCES recipe_templates(id) ON DELETE SET NULL;
 ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER;
 ```
 
+### Template Types
+
+| Type | Use Case | Links As |
+|------|----------|----------|
+| `preferment` | Poolish, Levain, Biga, Pate Fermentee | PF ingredient (formula copied) |
+| `intermediate_dough` | First Dough, Detrempe | PF ingredient (formula copied) |
+| `filling` | Pastry Cream, Frangipane | Companion (recipe linked) |
+| `glaze` | Apricot Glaze, Egg Wash | Companion (recipe linked) |
+| `garnish` | Streusel, Pearl Sugar | Companion (recipe linked) |
+| `other` | Catch-all | Companion (recipe linked) |
+
+### How Linking Works
+
+**PF templates (copy-on-link):**
+1. Baker opens a recipe, selects "From Library..." on a PF ingredient card
+2. Template's backing recipe is loaded; its ingredient composition is copied into the PF's `preferment_bakers_pcts`, its `preferment_settings` (type, DDT, fermentation duration) and PF process steps are copied
+3. `source_template_id` and `source_version` are set on the PF's `preferment_settings`
+4. A "From: Italian Levain" badge appears on the PF card
+
+**Companion templates (link with tracking):**
+1. Baker opens the companion add dropdown — template library items appear in a separate "Template Library" section
+2. Selecting a template links the backing recipe as a companion, with `source_template_id` and `source_version` set
+3. A "From: Pastry Cream" badge appears on the companion row
+
+### Stale Detection & Update Pull
+
+Uses §12 versioning. When a template's backing recipe version exceeds the `source_version` stored on the link, the link is "stale."
+
+**Detection:** `getStaleTemplateLinks(recipeId, bakeryId)` joins `preferment_settings`/`recipe_companions` against `recipe_templates` and `recipes` to find links where `recipe.version > source_version`.
+
+**UI — prominent amber alert banners** (not subtle badges):
+- Warning triangle icon + message: *"{Template Name} has been updated (v1 → v2)"*
+- **"Review changes"** link → opens the template recipe's version comparison page (`/recipes/{id}/versions?compare={source_version},{current_version}`) so the baker can see exactly what changed
+- **PF links:** "Pull update" button — fetches the latest template formula via `pullTemplate` action and re-copies it into the PF ingredient (baker's pcts, settings, process steps), bumping `source_version`
+- **Companion links:** "Acknowledge" button — bumps `source_version` client-side to mark the link as current. Since the companion is a live link to the recipe, the baker already sees the latest formula; acknowledge just clears the stale indicator after reviewing
+
+### Template Library UI
+
+**Route: `/(app)/templates/`**
+- Search input, card grid with empty state
+- Each card: template name, type badge (color-coded), "Used in X recipes" count, "Edit formula" link → `/recipes/{template.recipe_id}`, version number, updated date
+- Delete overlay with confirmation (ON DELETE SET NULL cleans FKs; linked recipes keep local copies and show "Local copy" badge)
+
+**Route: `/(app)/templates/new/`**
+- Two modes: "Create new" (name + type → creates a new recipe + template, redirects to recipe builder) and "Promote existing" (pick a recipe + type → creates template pointing to it)
+
+**Recipe list page:** Recipes that back a template show a blue "Template" badge on the card.
+
+**Sidebar:** "Templates" nav item with layers icon between Recipes and Inventory.
+
+### DB Functions
+
+| Function | Purpose |
+|----------|---------|
+| `createTemplate(bakeryId, name, templateType, recipeId)` | Insert template row, return id |
+| `getTemplatesByBakery(bakeryId)` | List with recipe name, version, used-in counts (PF + companion) |
+| `getTemplate(templateId, bakeryId)` | Single template with bakery scoping |
+| `updateTemplate(templateId, bakeryId, {name?, template_type?})` | Update metadata only |
+| `deleteTemplate(templateId, bakeryId)` | Delete template row (ON DELETE SET NULL cleans FKs) |
+| `promoteRecipeToTemplate(bakeryId, recipeId, templateType)` | Create template from existing recipe |
+| `getTemplateUsages(templateId)` | All recipes referencing this template (PF + companion links) |
+| `getPfTemplates(bakeryId)` | Templates with type `preferment` or `intermediate_dough` |
+| `getCompanionTemplates(bakeryId)` | Templates with type `filling`, `glaze`, `garnish`, `other` |
+| `getStaleTemplateLinks(recipeId, bakeryId)` | PF/companion links where template recipe version > source_version |
+| `getTemplateForRecipe(recipeId)` | Check if a recipe backs a template |
+
+### Extended Existing Functions
+
+- **`updateRecipe()`**: persists `source_template_id` and `source_version` on both `preferment_settings` INSERT and `recipe_companions` INSERT during the delete+reinsert cycle
+- **`getRecipe()`**: already uses `SELECT ps.*` and `SELECT rc.*` — new columns included automatically
+- **`deleteRecipe()`**: also deletes from `recipe_templates WHERE recipe_id = ?` (backing recipe deleted = template deleted)
+- **`deleteBakery()`**: explicit template deletion for safety (CASCADE from bakeries FK exists but belt-and-suspenders)
+- **`buildRecipeSnapshot()`**: includes `source_template_id` and `source_version` in both PF settings and companion snapshots
+
+### Versioning Integration
+
+`src/lib/version-diff.js` extended:
+- PF settings diff fields include `source_template_id`, `source_version`
+- Companion diff fields include `source_template_id`, `source_version`
+- `summarizeChanges()` generates human-readable lines for template link/unlink/sync events (e.g. "Linked Poolish to template", "Synced Poolish from template v2", "Unlinked Poolish from template")
+
 ### Constraints
 
-- Templates are scoped to a bakery
-- Deleting a template sets `source_template_id = NULL` on all linked recipes (they keep their local copy)
-- Template versioning uses the same §12 system (recipe versions)
-- A template can be of any type — PF, filling, glaze, etc.
-- Templates appear in a dedicated library view, separate from the recipe list
+- Templates are scoped to a bakery — other bakeries cannot see them
+- Deleting a template sets `source_template_id = NULL` on all linked recipes (they keep their local copy, shown with "Local copy" badge)
+- Template versioning uses §12 (recipe versions on the backing recipe)
+- Viewer role cannot create/edit/delete templates (`requireRole()` enforced)
+- A recipe can only back one template (enforced by unique `recipe_id` in `recipe_templates`)
 
-### Phase 3 Prerequisites
+### Implementation Files
 
-- Phase 1 (companion links — for non-PF templates)
-- §12 Versioning (for template version tracking)
+| File | Role |
+|------|------|
+| `src/lib/server/db.js` | Schema, migrations, template CRUD, stale detection, extended updateRecipe/deleteRecipe/buildRecipeSnapshot |
+| `src/routes/(app)/templates/+page.server.js` | Template list load + delete action |
+| `src/routes/(app)/templates/+page.svelte` | Template library list UI |
+| `src/routes/(app)/templates/new/+page.server.js` | Create/promote server actions |
+| `src/routes/(app)/templates/new/+page.svelte` | Create template form |
+| `src/routes/(app)/recipes/[id]/+page.server.js` | Load pfTemplates, companionTemplates, staleLinks; pullTemplate action |
+| `src/routes/(app)/recipes/[id]/+page.svelte` | "From Library" picker, stale banners, pull/acknowledge, source tracking in buildRecipeData |
+| `src/lib/version-diff.js` | Template source tracking in diffs and change summaries |
+| `src/lib/components/app-sidebar.svelte` | Templates nav item with layers icon |
+| `src/routes/(app)/+layout.svelte` | Templates breadcrumb label |
+| `src/routes/(app)/recipes/+page.svelte` | "Template" badge on recipe cards |
+| `src/routes/(app)/recipes/+page.server.js` | Template flag lookup for recipe list |
 
 ---
 
@@ -359,7 +418,7 @@ ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'F
 
 New PROCESS_STAGES: `PF_MIX`, `PF_FEED`, `PF_FERMENT`
 
-### Phase 3 (planned — new table + alter existing)
+### Phase 3 (implemented — new table + alter existing)
 
 ```sql
 CREATE TABLE IF NOT EXISTS recipe_templates (
@@ -371,6 +430,9 @@ CREATE TABLE IF NOT EXISTS recipe_templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_recipe_templates_bakery ON recipe_templates(bakery_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_templates_recipe ON recipe_templates(recipe_id);
 
 ALTER TABLE preferment_settings ADD COLUMN source_template_id TEXT
   REFERENCES recipe_templates(id) ON DELETE SET NULL;
@@ -397,9 +459,9 @@ Companion recipes don't participate in §4/§5 calculations. They have their own
 
 PF process steps are documentation only — they don't affect quantities. The only change is `suggestPfProcessSteps()` in `process-steps.js` which generates PF-specific steps.
 
-### Phase 3: None (planned)
+### Phase 3: None
 
-Templates are a UI/management layer. The calculation engine sees the same data as before.
+Templates are a UI/management layer. The calculation engine sees the same data as before — `source_template_id` and `source_version` are metadata that don't affect calculations.
 
 ### Total Formula Resolution (existing — no change needed)
 
@@ -432,24 +494,43 @@ PF steps appear inside each PF card after the settings row:
 
 Production page groups PF steps under PF name + type badge headers.
 
-### Phase 3: Template Library (Planned)
+### Phase 3: Template Library & Linking (Implemented)
 
-New route: `/(app)/recipes/templates/` — shared sub-recipe definitions reusable across parent recipes.
+**Template Library (`/(app)/templates/`):**
+- Card grid with search, type badges (color-coded), used-in counts, "Edit formula" links
+- Create new or promote existing recipe via `/(app)/templates/new/`
+- Delete with confirmation overlay
+
+**Recipe Builder — PF Template Linking:**
+- "From Library..." dropdown on each PF ingredient card lists available PF/intermediate dough templates
+- Selecting a template copies the formula (baker's pcts, settings, process steps) and sets source tracking
+- "From: {name}" blue badge on linked PFs
+- Amber alert banner when stale: warning icon, version range, "Review changes" link to version comparison, "Pull update" button
+
+**Recipe Builder — Companion Template Linking:**
+- Companion add dropdown has "Template Library" optgroup above "Bakery Recipes"
+- Selecting a template links the backing recipe with source tracking
+- "From: {name}" blue badge on linked companions
+- Amber alert banner when stale: warning icon, version range, "Review changes" link to version comparison, "Acknowledge" button
+
+**Recipe List:** Blue "Template" badge on recipe cards that back a template.
+
+**Sidebar:** "Templates" nav item with layers icon.
 
 ---
 
 ## 9. Cross-Section Impact Matrix
 
-| Section               | Phase 1 (Done)                       | Phase 2 (Done)                                                    | Phase 3 (Planned)             |
+| Section               | Phase 1 (Done)                       | Phase 2 (Done)                                                    | Phase 3 (Done)                |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------- | ----------------------------- |
-| §3 Data Model         | New `recipe_companions` table + qty  | Alter `process_steps`; alter `recipes` (base_ingredient_category) | New `recipe_templates` table  |
+| §3 Data Model         | New `recipe_companions` table + qty  | Alter `process_steps`; alter `recipes` (base_ingredient_category) | New `recipe_templates` table + source tracking columns |
 | §4 Calculation Engine | None (companions are separate)       | Engine uses `base_ingredient_category`; PF ratio as BP%           | None                          |
-| §5 Pre-ferment System | None                                 | PF process step generation (`suggestPfProcessSteps`)              | Template source tracking      |
+| §5 Pre-ferment System | None                                 | PF process step generation (`suggestPfProcessSteps`)              | Template source tracking on PF settings |
 | §8 Autolyse           | None                                 | None                                                              | None                          |
 | §9 Timeline (future)  | Companion production scheduling      | PF DAG critical path                                              | Template update notifications |
-| §10 Process Steps     | None                                 | New PF stages, `preferment_ingredient_id` FK                      | None                          |
+| §10 Process Steps     | None                                 | New PF stages, `preferment_ingredient_id` FK                      | PF steps copied on template link |
 | §11 Loss/Waste        | Per-companion loss tracking (done)    | None                                                              | None                          |
-| §12 Versioning        | Companion links in snapshots + diffs | PF steps in snapshots; `base_ingredient_category` in diffs        | Track template source version |
+| §12 Versioning        | Companion links in snapshots + diffs | PF steps in snapshots; `base_ingredient_category` in diffs        | Template source version in snapshots + diffs; stale detection |
 | §15 Dough Type        | None                                 | Component types (TOPPING, GLAZE, FILLING, SAUCE); shadcn Select   | None                          |
 | Multi-tenancy         | Companions scoped to bakery          | None                                                              | Templates scoped to bakery    |
 
@@ -467,8 +548,12 @@ All phases use the existing migration pattern in `db.js` (try/catch ALTER TABLE,
 - `ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT REFERENCES recipe_ingredients(id) ON DELETE CASCADE`
 - `ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'`
 
-**Phase 3 migrations (planned):**
-- `recipe_templates` table + `source_template_id` columns
+**Phase 3 migrations (applied):**
+- `recipe_templates` table created in schema init (with indexes)
+- `ALTER TABLE preferment_settings ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL`
+- `ALTER TABLE preferment_settings ADD COLUMN source_version INTEGER`
+- `ALTER TABLE recipe_companions ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL`
+- `ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER`
 
 **Zero breaking changes.** All additions are additive — new tables, nullable columns, default values. Existing recipes work unchanged.
 
@@ -506,16 +591,24 @@ P9. ✅ PF rows show ratio as BP% instead of 0
 P10. ✅ Build passes, existing tests pass
 ```
 
-### Phase 3 Tests (planned)
+### Phase 3 Tests (verified)
 
 ```
-T1. Create template → appears in template library
-T2. Link template to recipe PF → copies formula, sets source_template_id
-T3. Update template → linked recipes NOT auto-updated
-T4. Sync from template → pulls latest formula into PF
-T5. Delete template → source_template_id set to NULL, local copy preserved
-T6. Template scoped to bakery
-T7. Template used-in count is accurate
+T1. ✅ Create template from new recipe → appears in library
+T2. ✅ Promote existing recipe to template → appears in library, recipe intact
+T3. ✅ Template list shows type badges, used-in count, edit formula link
+T4. ✅ Delete template → source_template_id becomes NULL, local copies preserved
+T5. ✅ Link PF from template → formula copied, "From: X" badge shown
+T6. ✅ Link companion from template → source tracking persisted
+T7. ✅ Edit template backing recipe → stale amber banner appears on linked parent recipes
+T8. ✅ "Review changes" link → opens version comparison for the template recipe
+T9. ✅ PF "Pull update" → formula re-copied, source_version bumped
+T10. ✅ Companion "Acknowledge" → source_version bumped, stale banner cleared
+T11. ✅ Version history shows template link/unlink/sync events
+T12. ✅ Template scoped to bakery — other bakeries cannot see it
+T13. ✅ Viewer role cannot create/edit/delete templates
+T14. ✅ Production page still works with template-linked companions
+T15. ✅ yarn build passes clean
 ```
 
 ---

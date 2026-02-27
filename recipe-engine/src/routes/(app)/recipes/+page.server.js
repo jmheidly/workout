@@ -1,5 +1,12 @@
 import { fail } from '@sveltejs/kit'
-import { getRecipesByBakery, deleteRecipe, getRecipe } from '$lib/server/db.js'
+import {
+  getRecipesByBakery,
+  deleteRecipe,
+  getRecipe,
+  getBakerySettings,
+  updateBakerySettings,
+  getTemplatesByBakery,
+} from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
 
@@ -37,7 +44,21 @@ export function load({ locals }) {
     }
   })
 
-  return { recipes: enriched, canEdit: locals.bakery.role !== 'viewer' }
+  const settings = getBakerySettings(locals.bakery.id)
+
+  // Build lookup of recipe IDs that back a template
+  const templates = getTemplatesByBakery(locals.bakery.id)
+  const templateRecipeIds = new Set(templates.map((t) => t.recipe_id))
+  const recipesWithTemplateFlag = enriched.map((r) => ({
+    ...r,
+    is_template: templateRecipeIds.has(r.id),
+  }))
+
+  return {
+    recipes: recipesWithTemplateFlag,
+    canEdit: locals.bakery.role !== 'viewer',
+    categoryOrder: settings.category_order || null,
+  }
 }
 
 /** @type {import('./$types').Actions} */
@@ -56,5 +77,21 @@ export const actions = {
 
     deleteRecipe(id, locals.bakery.id)
     return { success: true }
+  },
+
+  reorderCategories: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin')
+    const form = await request.formData()
+    const orderJson = form.get('order')?.toString()
+    if (!orderJson) return fail(400, { error: 'Missing order' })
+
+    try {
+      const order = JSON.parse(orderJson)
+      if (!Array.isArray(order)) return fail(400, { error: 'Invalid order' })
+      updateBakerySettings(locals.bakery.id, { category_order: order })
+      return { success: true }
+    } catch {
+      return fail(400, { error: 'Invalid JSON' })
+    }
   },
 }

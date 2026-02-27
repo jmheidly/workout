@@ -334,6 +334,95 @@
     companions.splice(idx, 1)
   }
 
+  // Template linking — apply a PF template's formula to a PF ingredient
+  async function applyPfTemplate(pfIngId, templateId) {
+    const template = (data.pfTemplates || []).find((t) => t.id === templateId)
+    if (!template) return
+
+    // Fetch template data via pullTemplate action
+    const formData = new FormData()
+    formData.set('template_id', templateId)
+    const res = await fetch('?/pullTemplate', { method: 'POST', body: formData })
+    const result = await res.json()
+
+    // SvelteKit form responses have the data nested
+    const actionData = result.data ? JSON.parse(result.data) : null
+    const tplData = actionData?.[1]?.templateData || actionData?.templateData
+    if (!tplData) {
+      toast.error('Failed to load template data')
+      return
+    }
+
+    applyPfTemplateData(pfIngId, tplData)
+    toast.success(`Applied "${template.name}" formula`)
+  }
+
+  function applyPfTemplateData(pfIngId, tplData) {
+    const pfIng = ingredients.find((i) => i.id === pfIngId)
+    if (!pfIng) return
+
+    // Copy PF settings from template
+    if (tplData.ingredients?.length) {
+      // Build baker's pcts from template ingredients
+      const templateFlourIngs = tplData.ingredients.filter(
+        (i) => i.category === 'FLOUR' || i.category === baseIngredientCategory
+      )
+      const templateOtherIngs = tplData.ingredients.filter(
+        (i) => i.category !== 'PREFERMENT'
+      )
+
+      // Update baker's pcts for this PF
+      for (const ing of ingredients) {
+        if (ing.category === 'PREFERMENT' && ing.id !== pfIngId) continue
+        // Find matching template ingredient by name
+        const tplIng = templateOtherIngs.find(
+          (ti) => ti.name.toLowerCase() === ing.name.toLowerCase()
+        )
+        if (tplIng) {
+          ing.preferment_bakers_pcts[pfIngId] = tplIng.base_qty
+        }
+      }
+    }
+
+    // Copy PF settings (type, DDT, fermentation)
+    const firstPf = tplData.ingredients?.find((i) => i.category === 'PREFERMENT')
+    if (firstPf?.preferment_settings) {
+      pfIng.preferment_settings = {
+        ...pfIng.preferment_settings,
+        type: firstPf.preferment_settings.type || pfIng.preferment_settings?.type || 'CUSTOM',
+        ddt: firstPf.preferment_settings.ddt ?? pfIng.preferment_settings?.ddt,
+        fermentation_duration_min: firstPf.preferment_settings.fermentation_duration_min ?? pfIng.preferment_settings?.fermentation_duration_min,
+      }
+    }
+
+    // Set source tracking
+    pfIng.preferment_settings = {
+      ...pfIng.preferment_settings,
+      source_template_id: tplData.templateId,
+      source_version: tplData.recipeVersion,
+    }
+
+    scheduleCalc()
+  }
+
+  // Template linking — add companion from template
+  function addCompanionFromTemplate(templateId) {
+    const template = (data.companionTemplates || []).find((t) => t.id === templateId)
+    if (!template) return
+    const recipe = (data.bakeryRecipes || []).find((r) => r.id === template.recipe_id)
+    if (!recipe) return
+    if (companions.some((c) => c.companion_recipe_id === template.recipe_id)) return
+    companions.push({
+      companion_recipe_id: template.recipe_id,
+      companion_name: recipe.name,
+      companion_dough_type: recipe.dough_type,
+      role: template.template_type || 'other',
+      notes: '',
+      source_template_id: template.id,
+      source_version: template.recipe_version,
+    })
+  }
+
   // Process Steps (§10)
   let processSteps = $state(
     (data.recipe.process_steps || []).map((s) => ({ ...s }))
@@ -471,6 +560,8 @@
         sort_order: idx,
         notes: c.notes,
         qty: c.qty || 0,
+        source_template_id: c.source_template_id || null,
+        source_version: c.source_version ?? null,
       })),
     }
   }
@@ -1677,6 +1768,10 @@
       {@const availableIngs = ingredients.filter((i) => (i.category !== 'PREFERMENT' || i.id === pfIng.id) && gramsForPf[i.id] == null && i.name)}
       {@const pfRequiredCats = PF_REQUIRED_CATEGORIES[pfIng.preferment_settings?.type] || []}
 
+      {@const pfStale = (data.staleLinks?.stalePfs || []).find((s) => s.ingredient_id === pfIng.id)}
+      {@const pfTemplateId = pfIng.preferment_settings?.source_template_id}
+      {@const pfTemplateName = pfTemplateId ? (data.pfTemplates || []).find((t) => t.id === pfTemplateId)?.name : null}
+
       <Card class="border-indigo-200">
         <CardHeader class="flex-row items-center justify-between space-y-0 pb-0">
           <div class="flex items-center gap-2">
@@ -1684,6 +1779,15 @@
             <Badge variant="secondary" class="bg-indigo-50 text-indigo-700 font-normal">
               {pfIng.preferment_settings?.type || 'CUSTOM'}
             </Badge>
+            {#if pfTemplateName}
+              <Badge variant="secondary" class="bg-blue-50 text-blue-700 font-normal text-[10px]">
+                From: {pfTemplateName}
+              </Badge>
+            {:else if pfTemplateId}
+              <Badge variant="secondary" class="font-normal text-[10px]">
+                Local copy
+              </Badge>
+            {/if}
           </div>
           {#if calcPf?.enabled}
             <span class="text-xs tabular-nums text-muted-foreground">
@@ -1691,6 +1795,56 @@
             </span>
           {/if}
         </CardHeader>
+
+        {#if pfStale}
+          <div class="mx-6 mt-2 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <span class="flex-1">
+              <span class="font-semibold">{pfTemplateName || 'Template'}</span> has been updated (v{pfStale.source_version} → v{pfStale.current_version}).
+              <a href="/recipes/{pfStale.template_recipe_id}/versions?compare={pfStale.source_version},{pfStale.current_version}" class="underline hover:text-amber-900">Review changes</a>, then pull to sync this pre-ferment.
+            </span>
+            {#if data.canEdit}
+              <form
+                method="POST"
+                action="?/pullTemplate"
+                use:enhance={() => {
+                  return async ({ result, update }) => {
+                    if (result.type === 'success' && result.data?.templateData) {
+                      applyPfTemplateData(pfIng.id, result.data.templateData)
+                      toast.success(`Updated from "${result.data.templateData.templateName}"`)
+                    }
+                    await update({ reset: false })
+                  }
+                }}
+              >
+                <input type="hidden" name="template_id" value={pfStale.source_template_id} />
+                <Button type="submit" variant="outline" size="sm" class="h-7 text-xs whitespace-nowrap text-amber-700 border-amber-300 hover:bg-amber-100">
+                  Pull update
+                </Button>
+              </form>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.canEdit && (data.pfTemplates || []).length > 0}
+          <div class="flex items-center gap-2 px-6 pt-3">
+            <select
+              onchange={(e) => {
+                if (e.target.value) {
+                  applyPfTemplate(pfIng.id, e.target.value)
+                  e.target.value = ''
+                }
+              }}
+              class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+            >
+              <option value="">From Library...</option>
+              {#each data.pfTemplates || [] as t}
+                <option value={t.id}>{t.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
         <CardContent class="p-0 pt-4">
           {#if pfMismatches[pfIng.id]}
             <div class="mx-6 mb-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -2141,6 +2295,12 @@
       <CardContent class="p-0">
         <div class="divide-y divide-border">
           {#each companions as comp, idx}
+            {@const compStale = (data.staleLinks?.staleCompanions || []).find(
+              (s) => s.companion_recipe_id === comp.companion_recipe_id && s.source_template_id === comp.source_template_id
+            )}
+            {@const compTemplateName = comp.source_template_id
+              ? (data.companionTemplates || []).find((t) => t.id === comp.source_template_id)?.name
+              : null}
             <div class="group px-6 py-3 transition-colors hover:bg-muted/20">
               <div class="flex items-center gap-3">
                 <div class="flex-1 min-w-0">
@@ -2152,6 +2312,11 @@
                   </a>
                   {#if comp.companion_dough_type}
                     <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">{DOUGH_TYPE_LABELS[comp.companion_dough_type] || comp.companion_dough_type}</Badge>
+                  {/if}
+                  {#if compTemplateName}
+                    <Badge variant="secondary" class="ml-1.5 bg-blue-50 text-blue-700 text-[9px] font-normal">From: {compTemplateName}</Badge>
+                  {:else if comp.source_template_id}
+                    <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">Local copy</Badge>
                   {/if}
                 </div>
 
@@ -2198,6 +2363,30 @@
                 {/if}
               </div>
 
+              {#if compStale}
+                <div class="mt-2 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                  <span class="flex-1">
+                    <span class="font-semibold">{compTemplateName || 'Template'}</span> has been updated (v{compStale.source_version} → v{compStale.current_version}).
+                    <a href="/recipes/{comp.companion_recipe_id}/versions?compare={compStale.source_version},{compStale.current_version}" class="underline hover:text-amber-900">Review changes</a>, then acknowledge.
+                  </span>
+                  {#if data.canEdit}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="h-7 text-xs whitespace-nowrap text-amber-700 border-amber-300 hover:bg-amber-100"
+                      onclick={() => {
+                        comp.source_version = compStale.current_version
+                        onFieldChange()
+                        toast.success(`Acknowledged update for "${comp.companion_name}"`)
+                      }}
+                    >
+                      Acknowledge
+                    </Button>
+                  {/if}
+                </div>
+              {/if}
+
               <!-- Companion ingredient summary -->
               {#if data.companionDetails?.[comp.companion_recipe_id]?.calculated}
                 {@const detail = data.companionDetails[comp.companion_recipe_id]}
@@ -2218,21 +2407,38 @@
       </CardContent>
     {/if}
 
-    {#if data.canEdit && availableRecipes.length > 0}
+    {#if data.canEdit && (availableRecipes.length > 0 || (data.companionTemplates || []).length > 0)}
+      {@const availableCompTemplates = (data.companionTemplates || []).filter(
+        (t) => !companions.some((c) => c.companion_recipe_id === t.recipe_id)
+      )}
       <CardFooter class="border-t border-border pt-3">
         <select
           onchange={(e) => {
-            if (e.target.value) {
+            if (!e.target.value) return
+            if (e.target.value.startsWith('tpl:')) {
+              addCompanionFromTemplate(e.target.value.slice(4))
+            } else {
               addCompanion(e.target.value)
-              e.target.value = ''
             }
+            e.target.value = ''
           }}
           class="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none ring-ring transition-shadow focus:ring-1"
         >
           <option value="">+ Add companion...</option>
-          {#each availableRecipes as r}
-            <option value={r.id}>{r.name}</option>
-          {/each}
+          {#if availableCompTemplates.length > 0}
+            <optgroup label="Template Library">
+              {#each availableCompTemplates as t}
+                <option value="tpl:{t.id}">{t.name}</option>
+              {/each}
+            </optgroup>
+          {/if}
+          {#if availableRecipes.length > 0}
+            <optgroup label="Bakery Recipes">
+              {#each availableRecipes as r}
+                <option value={r.id}>{r.name}</option>
+              {/each}
+            </optgroup>
+          {/if}
         </select>
       </CardFooter>
     {/if}
