@@ -19,5 +19,20 @@ export function load({ params, locals }) {
 
   const mixerProfiles = getMixerProfiles(locals.bakery.id)
 
-  return { recipe, calculated, mixerProfiles }
+  // Load + calculate companion recipes for production scaling
+  const companionDetails = (recipe.companions || [])
+    .map((c) => {
+      const companionRecipe = getRecipe(c.companion_recipe_id, locals.bakery.id)
+      if (!companionRecipe) return null
+      let calc = null
+      try {
+        calc = calculateRecipe(companionRecipe)
+      } catch {
+        // ignore calc errors
+      }
+      return { ...c, recipe: companionRecipe, calculated: calc }
+    })
+    .filter(Boolean)
+
+  return { recipe, calculated, mixerProfiles, companionDetails }
 }

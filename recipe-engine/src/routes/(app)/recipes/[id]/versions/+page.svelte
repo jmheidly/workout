@@ -2,6 +2,7 @@
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
   import { diffVersions } from '$lib/version-diff.js'
+  import { DOUGH_TYPE_LABELS } from '$lib/dough-types.js'
   import { formatPct } from '$lib/utils.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
@@ -90,6 +91,7 @@
     name: 'Name',
     yield_per_piece: 'Yield/piece',
     ddt: 'DDT',
+    dough_type: 'Dough type',
     autolyse: 'Autolyse',
     autolyse_duration_min: 'Autolyse duration',
     autolyse_overrides: 'Autolyse split',
@@ -110,6 +112,7 @@
     if (field === 'process_loss_pct' || field === 'bake_loss_pct') {
       return `${((val || 0) * 100).toFixed(1)}%`
     }
+    if (field === 'dough_type') return DOUGH_TYPE_LABELS[val] || val || 'None'
     if (field === 'ddt') return `${val}°C`
     if (field === 'yield_per_piece') return `${val}g`
     if (field === 'autolyse') return val ? 'Yes' : 'No'
@@ -265,6 +268,7 @@
             {@const paramRows = [
               { field: 'yield_per_piece', show: true },
               { field: 'ddt', show: true },
+              { field: 'dough_type', show: side.snapshot.dough_type || other.dough_type },
               { field: 'mix_type', show: true },
               { field: 'mixer_profile_id', show: side.snapshot.mixer_profile_id || other.mixer_profile_id },
               { field: 'process_loss_pct', show: side.snapshot.process_loss_pct || other.process_loss_pct },

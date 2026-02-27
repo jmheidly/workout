@@ -5,6 +5,7 @@ import {
   getIngredientLibrary,
   syncIngredientLibrary,
   getRecipeVersionCount,
+  getRecipesByBakery,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
@@ -26,8 +27,9 @@ export function load({ params, locals }) {
 
   const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
   const versionCount = getRecipeVersionCount(params.id)
+  const bakeryRecipes = getRecipesByBakery(locals.bakery.id)
 
-  return { recipe, calculated, ingredientLibrary, versionCount, canEdit: locals.bakery.role !== 'viewer' }
+  return { recipe, calculated, ingredientLibrary, versionCount, bakeryRecipes, canEdit: locals.bakery.role !== 'viewer' }
 }
 
 /** @type {import('./$types').Actions} */

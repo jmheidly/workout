@@ -1,5 +1,5 @@
 /**
- * Process Steps helpers (§10)
+ * Process Steps helpers (§10, §15.3)
  * Shared module — used client-side for stage constants and step suggestions.
  */
 
@@ -59,11 +59,44 @@ export const MIX_TYPE_PROCESS = {
 }
 
 /**
- * Generate a complete process from mixing through final proof.
+ * Dough type → post-mixing process overrides.
+ * When present, these replace MIX_TYPE_PROCESS values for the bread generator.
+ */
+const DOUGH_TYPE_MIX_PROCESS = {
+  PIZZA: {
+    bulk_min: 120,
+    folds: 2,
+    fold_interval_min: 30,
+    bench_rest_min: 10,
+    proof_min: 30,
+  },
+  FLATBREAD: {
+    bulk_min: 60,
+    folds: 1,
+    fold_interval_min: 30,
+    bench_rest_min: 15,
+    proof_min: 45,
+  },
+}
+
+/**
+ * Dough types that use specialized template generators instead of the bread generator.
+ */
+const SPECIALIZED_TYPES = new Set([
+  'LAMINATED_YEASTED',
+  'LAMINATED',
+  'CHOUX',
+  'COOKIE',
+  'SHORTCRUST',
+  'SWEET_PASTRY',
+  'PASTA',
+])
+
+/**
+ * Generate a complete process from mixing through bake.
  *
- * Analyzes mix type, DDT, enrichment level, and ingredient composition to
- * produce scientifically-grounded steps with duration, temperature, and
- * mixer speed populated where derivable.
+ * Analyzes mix type, DDT, enrichment level, dough type, and ingredient
+ * composition to produce scientifically-grounded steps.
  *
  * @param {object} opts
  * @param {Array<{ id: string, name: string, category: string, base_qty: number, preferment_settings?: object }>} opts.ingredients
@@ -72,6 +105,7 @@ export const MIX_TYPE_PROCESS = {
  * @param {string} [opts.mixType='Improved Mix']
  * @param {number} [opts.ddt=24]
  * @param {Object.<string, 'autolyse'|'final'>} [opts.autolyseOverrides={}] - baker's drag overrides
+ * @param {string|null} [opts.doughType=null] - dough type key (§15)
  * @returns {Array<{ stage: string, title: string, description: string, duration_min: number|null, temperature: number|null, mixer_speed: string|null }>}
  */
 export function suggestProcessSteps({
@@ -81,7 +115,13 @@ export function suggestProcessSteps({
   mixType = 'Improved Mix',
   ddt = 24,
   autolyseOverrides = {},
+  doughType = null,
 }) {
+  // Dispatch to specialized templates when applicable
+  if (doughType && SPECIALIZED_TYPES.has(doughType)) {
+    return generateSpecializedSteps(doughType, { ingredients, ddt })
+  }
+
   const { phases: phaseMap } = classifyAllIngredients(ingredients)
 
   // Apply baker's autolyse overrides on top of classification
@@ -107,7 +147,12 @@ export function suggestProcessSteps({
   const hasFatPhase = fatIngs.length > 0
   const hasMixinPhase = mixinIngs.length > 0
   const hasSecond = MIX_TYPES[mixType]?.has_second ?? true
-  const proc = MIX_TYPE_PROCESS[mixType] || MIX_TYPE_PROCESS['Improved Mix']
+
+  // Use dough type overrides if available, otherwise fall back to mix type
+  const proc =
+    (doughType && DOUGH_TYPE_MIX_PROCESS[doughType]) ||
+    MIX_TYPE_PROCESS[mixType] ||
+    MIX_TYPE_PROCESS['Improved Mix']
 
   // Enrichment detection: fat phase ingredients present
   const isEnriched = hasFatPhase
@@ -225,9 +270,7 @@ export function suggestProcessSteps({
   const totalFolds = proc.folds + 1 // N fold actions + 1 final rest = N+1 steps
   const remainder = proc.bulk_min - proc.folds * proc.fold_interval_min
   const lastPhaseMin = remainder > 0 ? remainder : proc.fold_interval_min
-  const enrichedNote = isEnriched
-    ? ' Monitor volume rather than strict timing.'
-    : ''
+  const enrichedNote = isEnriched ? ' Monitor volume rather than strict timing.' : ''
 
   for (let i = 1; i <= totalFolds; i++) {
     const isLast = i === totalFolds
@@ -244,6 +287,98 @@ export function suggestProcessSteps({
       mixer_speed: null,
     })
   }
+
+  // Pizza: ball + stretch instead of preshape/shape
+  if (doughType === 'PIZZA') {
+    steps.push(
+      {
+        stage: 'PRESHAPE',
+        title: 'Ball',
+        description: 'Divide and ball. Tuck edges under to build surface tension.',
+        duration_min: null,
+        temperature: null,
+        mixer_speed: null,
+      },
+      {
+        stage: 'REST',
+        title: 'Ball Proof',
+        description: `Proof at ${proofTemp}\u00B0C. Balls should be puffy and relaxed.`,
+        duration_min: proc.proof_min,
+        temperature: proofTemp,
+        mixer_speed: null,
+      },
+      {
+        stage: 'SHAPE',
+        title: 'Stretch',
+        description:
+          'Stretch by hand from center outward. Do not use a rolling pin \u2014 preserves gas structure.',
+        duration_min: null,
+        temperature: null,
+        mixer_speed: null,
+      },
+      {
+        stage: 'BAKE',
+        title: 'Bake',
+        description:
+          'Bake at 260\u2013480\u00B0C for 2\u20135 min. Neapolitan: 480\u00B0C/90s. Home oven: 260\u00B0C on stone/steel, 5 min.',
+        duration_min: 5,
+        temperature: 260,
+        mixer_speed: null,
+      }
+    )
+    return steps
+  }
+
+  // Flatbread: shorter flow, roll/stretch step, very hot bake
+  if (doughType === 'FLATBREAD') {
+    steps.push(
+      {
+        stage: 'PRESHAPE',
+        title: 'Divide',
+        description: 'Divide into portions and round loosely.',
+        duration_min: null,
+        temperature: null,
+        mixer_speed: null,
+      },
+      {
+        stage: 'REST',
+        title: 'Bench Rest',
+        description: 'Rest on bench, covered. Gluten relaxes for rolling/stretching.',
+        duration_min: proc.bench_rest_min,
+        temperature: null,
+        mixer_speed: null,
+      },
+      {
+        stage: 'SHAPE',
+        title: 'Roll / Stretch',
+        description:
+          'Roll or stretch to desired thickness. Pita: 5mm even for pocket. Focaccia: dimple in oiled pan.',
+        duration_min: null,
+        temperature: null,
+        mixer_speed: null,
+      },
+      {
+        stage: 'PROOF',
+        title: 'Final Proof',
+        description: `Proof at ${proofTemp}\u00B0C until puffy.`,
+        duration_min: proc.proof_min,
+        temperature: proofTemp,
+        mixer_speed: null,
+      },
+      {
+        stage: 'BAKE',
+        title: 'Bake',
+        description:
+          'Bake at high heat. Pita: 260\u2013480\u00B0C for 2\u20133 min until puffed. Naan: tandoor or cast iron. Focaccia: 220\u00B0C, 20\u201325 min.',
+        duration_min: 10,
+        temperature: 260,
+        mixer_speed: null,
+      }
+    )
+    return steps
+  }
+
+  // ── Standard bread post-mix flow ──────────────────────────
 
   // Preshape
   steps.push({
@@ -319,6 +454,583 @@ export function suggestProcessSteps({
   })
 
   return steps
+}
+
+// ── Specialized Template Generators ─────────────────────────────────
+
+/**
+ * Dispatch to a dough-type-specific template.
+ * These types don't follow the standard bread mixing → bulk → shape → proof → bake flow.
+ */
+function generateSpecializedSteps(doughType, { ingredients, ddt }) {
+  const generators = {
+    LAMINATED_YEASTED: generateLaminatedYeasted,
+    LAMINATED: generateLaminatedPuff,
+    CHOUX: generateChoux,
+    COOKIE: generateCookie,
+    SHORTCRUST: generateShortcrust,
+    SWEET_PASTRY: generateSweetPastry,
+    PASTA: generatePasta,
+  }
+  const gen = generators[doughType]
+  return gen ? gen({ ingredients, ddt }) : []
+}
+
+function generateLaminatedYeasted({ ingredients, ddt }) {
+  const allNames = nameList(ingredients.filter((i) => i.category !== 'PREFERMENT'))
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Mix D\u00E9trempe',
+      description: `Combine ${allNames} on 1st speed until smooth. Do not overdevelop \u2014 lamination provides structure.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'FOLD',
+      title: 'Bulk Rest',
+      description: `Rest d\u00E9trempe at ${ddt}\u00B0C. Gluten relaxes for sheeting.`,
+      duration_min: 60,
+      temperature: ddt,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Enclose Butter Block',
+      description:
+        'Sheet d\u00E9trempe, place beurrage in center, fold to enclose. Seal edges completely.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Letter Fold 1',
+      description:
+        'Roll out to 3\u00D7 length, fold in thirds (letter fold). Keep butter and dough at same consistency.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Retard 1',
+      description: 'Wrap and refrigerate. Butter firms, gluten relaxes.',
+      duration_min: 30,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Letter Fold 2',
+      description: 'Roll out and perform second letter fold.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Retard 2',
+      description: 'Wrap and refrigerate.',
+      duration_min: 30,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Letter Fold 3',
+      description: 'Roll out and perform third letter fold. Total: 27 layers.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Final Retard',
+      description: 'Wrap and refrigerate for at least 2 hours, preferably overnight.',
+      duration_min: 120,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Sheet & Cut',
+      description: 'Roll to 4mm thickness. Cut triangles (croissant) or squares (danish).',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'PROOF',
+      title: 'Proof',
+      description:
+        'Proof at 27\u00B0C, 75% humidity for 90 min. Layers should be visibly separated and jiggly.',
+      duration_min: 90,
+      temperature: 27,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Egg Wash & Bake',
+      description:
+        'Egg wash. Bake at 190\u00B0C for 15\u201318 min until deep golden. Do not open oven in first 10 min.',
+      duration_min: 17,
+      temperature: 190,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateLaminatedPuff({ ingredients }) {
+  const allNames = nameList(ingredients)
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Mix D\u00E9trempe',
+      description: `Combine ${allNames} on 1st speed until just cohesive. Do not develop gluten.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'REST',
+      title: 'Rest',
+      description: 'Wrap and rest at room temperature. Gluten relaxes for sheeting.',
+      duration_min: 60,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Enclose Butter Block',
+      description:
+        'Sheet d\u00E9trempe, place butter block in center, fold to enclose. Seal edges.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Single Fold 1',
+      description: 'Roll out and perform single (book) fold.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Retard',
+      description: 'Wrap and refrigerate between turns.',
+      duration_min: 30,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Single Fold 2',
+      description: 'Roll out and perform second single fold.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Retard',
+      description: 'Wrap and refrigerate.',
+      duration_min: 30,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Single Folds 3\u20136',
+      description:
+        'Continue folding and retarding. 6 single folds total = 729 layers. Retard 30 min between each pair.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'REST',
+      title: 'Final Rest',
+      description: 'Rest in refrigerator before cutting and shaping.',
+      duration_min: 60,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Cut & Shape',
+      description: 'Roll to desired thickness. Cut to shape. Dock if needed.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Bake',
+      description:
+        'Bake at 200\u00B0C for 20 min. Steam leavened \u2014 rises dramatically in the first 10 min.',
+      duration_min: 20,
+      temperature: 200,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateChoux({ ingredients }) {
+  const allNames = nameList(ingredients)
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Cook Panade',
+      description:
+        'Bring water and butter to a rolling boil in a saucepan. Add flour all at once, stir vigorously until dough pulls from sides and a film forms on the bottom of the pan.',
+      duration_min: 5,
+      temperature: 100,
+      mixer_speed: null,
+    },
+    {
+      stage: 'REST',
+      title: 'Cool Panade',
+      description:
+        'Transfer panade to mixer bowl. Cool for 10 min \u2014 must be below 60\u00B0C before adding eggs or they will cook.',
+      duration_min: 10,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Eggs',
+      description:
+        'Add eggs in 3\u20134 additions on 1st speed (paddle attachment). After each addition, mix until fully absorbed before adding more. Final consistency: thick, glossy, falls in a V-shape from the paddle.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Pipe',
+      description:
+        'Transfer to piping bag. Pipe to desired shapes on parchment-lined sheet. Smooth tops with a wet finger.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Bake \u2014 High',
+      description:
+        'Bake at 200\u00B0C for 15 min. Steam inside puffs creates the rise. Do not open oven.',
+      duration_min: 15,
+      temperature: 200,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Bake \u2014 Low',
+      description:
+        'Reduce to 175\u00B0C, bake 20 min more. Structure sets. Pierce base with a skewer to release steam.',
+      duration_min: 20,
+      temperature: 175,
+      mixer_speed: null,
+    },
+    {
+      stage: 'COOL',
+      title: 'Cool & Dry',
+      description:
+        'Turn off oven, prop door open, leave puffs inside 10 min to dry. Cool completely on rack before filling.',
+      duration_min: 10,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'FINISH',
+      title: 'Fill',
+      description:
+        'Fill with pastry cream, whipped cream, or desired filling. Pipe through base or slice top.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateCookie({ ingredients }) {
+  const fatIngs = ingredients.filter(
+    (i) => i.category === 'ENRICHMENT' || i.category === 'SWEETENER'
+  )
+  const dryIngs = ingredients.filter(
+    (i) =>
+      i.category === 'FLOUR' ||
+      i.category === 'LEAVENING' ||
+      i.category === 'SEASONING' ||
+      i.category === 'CONDITIONER'
+  )
+  const mixinIngs = ingredients.filter((i) => i.category === 'MIXIN')
+
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Cream Butter & Sugar',
+      description: `Cream ${nameList(fatIngs)} on medium speed (paddle) for 5 min until light and fluffy.`,
+      duration_min: 5,
+      temperature: null,
+      mixer_speed: '2nd',
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Eggs',
+      description: 'Add eggs one at a time, mixing until just incorporated after each.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Dry Ingredients',
+      description: `Add ${nameList(dryIngs)} on low speed. Mix until just combined \u2014 do not overmix.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    ...(mixinIngs.length > 0
+      ? [
+          {
+            stage: 'MIXING',
+            title: 'Fold in Mix-ins',
+            description: `Fold in ${nameList(mixinIngs)} by hand or on lowest speed.`,
+            duration_min: null,
+            temperature: null,
+            mixer_speed: '1st',
+          },
+        ]
+      : []),
+    {
+      stage: 'SHAPE',
+      title: 'Portion',
+      description: 'Scoop or pipe onto parchment-lined sheets at desired weight.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Chill (optional)',
+      description:
+        'Refrigerate portioned dough 30\u201360 min for better spread control and flavor development.',
+      duration_min: 30,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Bake',
+      description:
+        'Bake at 175\u00B0C for 10\u201312 min. Edges set but center still soft \u2014 cookies firm as they cool.',
+      duration_min: 11,
+      temperature: 175,
+      mixer_speed: null,
+    },
+    {
+      stage: 'COOL',
+      title: 'Cool',
+      description:
+        'Cool on sheet 5 min (carry-over baking continues), then transfer to wire rack.',
+      duration_min: 5,
+      temperature: null,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateShortcrust({ ingredients }) {
+  const fatIngs = ingredients.filter((i) => i.category === 'ENRICHMENT')
+  const flourIngs = ingredients.filter((i) => i.category === 'FLOUR')
+  const liquidIngs = ingredients.filter((i) => i.category === 'LIQUID')
+
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Sablage',
+      description: `Rub ${nameList(fatIngs)} into ${nameList(flourIngs)} by hand or pulse in food processor until pea-sized crumbs.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Liquid',
+      description: `Add ${nameList(liquidIngs.length > 0 ? liquidIngs : [{ name: 'cold water' }])}. Mix until dough just comes together. Do not knead.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Fraisage',
+      description:
+        'Push dough forward with heel of hand in small sections (fraisage). Redistributes fat for flaky layers.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'RETARD',
+      title: 'Chill',
+      description: 'Wrap in plastic and refrigerate. Gluten relaxes, fat re-firms.',
+      duration_min: 60,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Roll & Line Mold',
+      description:
+        'Roll to 3mm on floured surface. Line tart mold, pressing into corners. Trim excess. Dock base with fork.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Blind Bake',
+      description:
+        'Line with parchment and pie weights. Bake at 180\u00B0C for 15\u201320 min. Remove weights, bake 5 min more until light golden.',
+      duration_min: 20,
+      temperature: 180,
+      mixer_speed: null,
+    },
+    {
+      stage: 'FINISH',
+      title: 'Fill & Bake',
+      description:
+        'Add filling and bake per recipe instructions. If no further baking needed, cool shell completely before filling.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateSweetPastry({ ingredients }) {
+  const fatIngs = ingredients.filter(
+    (i) => i.category === 'ENRICHMENT' || i.category === 'SWEETENER'
+  )
+  const flourIngs = ingredients.filter((i) => i.category === 'FLOUR')
+
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Cream Butter & Sugar',
+      description: `Cream ${nameList(fatIngs)} on medium speed (paddle) until smooth and pale. Do not aerate excessively.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '2nd',
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Egg',
+      description: 'Add egg, mix until just incorporated.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'MIXING',
+      title: 'Add Flour',
+      description: `Add ${nameList(flourIngs)} on low speed. Mix until dough just comes together \u2014 minimal mixing prevents toughness.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'RETARD',
+      title: 'Chill',
+      description: 'Wrap in plastic and refrigerate. Dough firms for rolling.',
+      duration_min: 60,
+      temperature: 4,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Roll & Line Mold',
+      description:
+        'Roll to 3mm between parchment sheets. Line tart mold, press into corners, trim. Freeze 10 min if soft.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'BAKE',
+      title: 'Bake',
+      description:
+        'Bake at 170\u00B0C for 12\u201315 min until edges are golden. Sugar content promotes fast browning \u2014 watch carefully.',
+      duration_min: 14,
+      temperature: 170,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generatePasta({ ingredients }) {
+  const allNames = nameList(ingredients)
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Mix',
+      description: `Combine ${allNames} on low speed for 3 min until a shaggy dough forms.`,
+      duration_min: 3,
+      temperature: null,
+      mixer_speed: '1st',
+    },
+    {
+      stage: 'MIXING',
+      title: 'Knead',
+      description:
+        'Knead briefly by hand until smooth and elastic. Dough should spring back when poked.',
+      duration_min: 3,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'REST',
+      title: 'Rest',
+      description:
+        'Wrap tightly in plastic. Rest at room temperature. Gluten relaxes for easier rolling.',
+      duration_min: 30,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Roll',
+      description:
+        'Roll through pasta machine at progressively thinner settings, or roll by hand to desired thickness.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'SHAPE',
+      title: 'Cut',
+      description:
+        'Cut to desired shape: tagliatelle, pappardelle, ravioli, etc. Dust with semolina to prevent sticking.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'FINISH',
+      title: 'Dry or Cook',
+      description:
+        'Fresh: cook immediately in salted boiling water (2\u20134 min). Dried: hang or lay flat until brittle.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+  ]
 }
 
 /** Join ingredient names into a comma-separated list. */

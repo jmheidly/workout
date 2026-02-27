@@ -71,6 +71,7 @@ db.exec(`
     autolyse_duration_min INTEGER NOT NULL DEFAULT 20,
     mixer_profile_id TEXT,
     mix_type TEXT NOT NULL DEFAULT 'Improved Mix',
+    dough_type TEXT,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -329,7 +330,7 @@ function insertRecipe(recipeDef) {
   const recipeId = randomUUID()
 
   db.prepare(
-    'INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, mixer_profile_id, mix_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, mixer_profile_id, mix_type, dough_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     recipeId,
     userId,
@@ -338,7 +339,8 @@ function insertRecipe(recipeDef) {
     recipeDef.yield_per_piece,
     recipeDef.ddt,
     recipeDef.mixer_profile_id || null,
-    recipeDef.mix_type || 'Improved Mix'
+    recipeDef.mix_type || 'Improved Mix',
+    recipeDef.dough_type || null
   )
 
   // Build name -> id map, insert ingredients
@@ -413,6 +415,7 @@ insertRecipe({
   ddt: 24,
   mixer_profile_id: caplainId,
   mix_type: 'Improved Mix',
+  dough_type: 'RICH',
   ingredients: [
     { name: 'Bread flour', category: 'FLOUR', K: 234 },
     { name: 'Butter', category: 'ENRICHMENT', K: 357 },
@@ -458,6 +461,7 @@ insertRecipe({
   ddt: 24,
   mixer_profile_id: caplainId,
   mix_type: 'Short Mix',
+  dough_type: 'LEAN',
   ingredients: [
     { name: 'Bread flour', category: 'FLOUR', K: 1000 },
     { name: 'Water', category: 'LIQUID', K: 700 },
@@ -486,6 +490,7 @@ insertRecipe({
   ddt: 24,
   mixer_profile_id: caplainId,
   mix_type: 'Short Mix',
+  dough_type: 'SOURDOUGH',
   ingredients: [
     { name: 'Bread flour', category: 'FLOUR', K: 850 },
     { name: 'WW Flour', category: 'FLOUR', K: 150 },
@@ -514,6 +519,7 @@ insertRecipe({
   ddt: 22,
   mixer_profile_id: caplainId,
   mix_type: 'Intensive Mix',
+  dough_type: 'RICH',
   ingredients: [
     { name: 'Bread flour', category: 'FLOUR', K: 1000 },
     { name: 'Eggs', category: 'ENRICHMENT', K: 500 },

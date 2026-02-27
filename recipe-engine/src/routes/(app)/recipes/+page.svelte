@@ -11,6 +11,7 @@
     CardFooter,
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
+  import { DOUGH_TYPE_LABELS } from '$lib/dough-types.js'
   import { Separator } from '$lib/components/ui/separator/index.js'
 
   let { data } = $props()
@@ -198,6 +199,11 @@
 
             <!-- Badges -->
             <div class="flex flex-wrap gap-1.5">
+              {#if recipe.dough_type}
+                <Badge variant="secondary" class="bg-emerald-50 text-emerald-700 font-normal">
+                  {DOUGH_TYPE_LABELS[recipe.dough_type] || recipe.dough_type}
+                </Badge>
+              {/if}
               {#if recipe.hydration != null}
                 <Badge variant="secondary" class="font-normal">
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>
@@ -212,6 +218,11 @@
               {#if recipe.autolyse}
                 <Badge variant="secondary" class="bg-teal-50 text-teal-700 font-normal">
                   Autolyse
+                </Badge>
+              {/if}
+              {#if recipe.companion_count > 0}
+                <Badge variant="secondary" class="bg-orange-50 text-orange-700 font-normal">
+                  {recipe.companion_count} companion{recipe.companion_count > 1 ? 's' : ''}
                 </Badge>
               {/if}
             </div>

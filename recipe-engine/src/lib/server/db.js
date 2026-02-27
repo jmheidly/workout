@@ -148,6 +148,16 @@ function initSchema(db) {
       accepted_at TEXT,
       UNIQUE(bakery_id, email)
     );
+
+    CREATE TABLE IF NOT EXISTS recipe_companions (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      companion_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'other',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      UNIQUE(recipe_id, companion_recipe_id)
+    );
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -168,6 +178,7 @@ function initSchema(db) {
     'ALTER TABLE mixer_profiles ADD COLUMN bakery_id TEXT REFERENCES bakeries(id)',
     'ALTER TABLE ingredient_library ADD COLUMN bakery_id TEXT REFERENCES bakeries(id)',
     "ALTER TABLE recipes ADD COLUMN autolyse_overrides TEXT NOT NULL DEFAULT '{}'",
+    'ALTER TABLE recipes ADD COLUMN dough_type TEXT',
   ]
   for (const sql of migrations) {
     try {
@@ -189,6 +200,7 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_ingredient_library_bakery ON ingredient_library(bakery_id);
     CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
     CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email);
+    CREATE INDEX IF NOT EXISTS idx_recipe_companions_recipe ON recipe_companions(recipe_id);
   `)
 
   // Data migration: move existing users to bakeries
@@ -448,8 +460,8 @@ export function createRecipe(userId, bakeryId, data) {
   const recipeId = generateId()
 
   const insertRecipe = db.prepare(`
-    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type, autolyse_overrides)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type, autolyse_overrides, dough_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const insertIngredient = db.prepare(`
@@ -481,7 +493,8 @@ export function createRecipe(userId, bakeryId, data) {
       data.autolyse_duration_min || 20,
       data.mixer_profile_id || null,
       data.mix_type || 'Improved Mix',
-      JSON.stringify(data.autolyse_overrides || {})
+      JSON.stringify(data.autolyse_overrides || {}),
+      data.dough_type || null
     )
 
     if (data.ingredients) {
@@ -602,6 +615,16 @@ export function getRecipe(id, bakeryId) {
     .prepare('SELECT * FROM process_steps WHERE recipe_id = ? ORDER BY sort_order')
     .all(id)
 
+  const companions = db
+    .prepare(
+      `SELECT rc.*, r.name as companion_name, r.dough_type as companion_dough_type
+       FROM recipe_companions rc
+       JOIN recipes r ON r.id = rc.companion_recipe_id
+       WHERE rc.recipe_id = ?
+       ORDER BY rc.sort_order`
+    )
+    .all(id)
+
   const assembled = {
     ...recipe,
     autolyse_overrides: JSON.parse(recipe.autolyse_overrides || '{}'),
@@ -610,7 +633,8 @@ export function getRecipe(id, bakeryId) {
       preferment_bakers_pcts: pfBpMap[ing.id] || {},
       preferment_settings: pfSettingsMap[ing.id] || null
     })),
-    process_steps: processSteps
+    process_steps: processSteps,
+    companions
   }
 
   return assembled
@@ -626,10 +650,11 @@ export function getRecipesByBakery(bakeryId) {
     .prepare(
       `SELECT r.id, r.name, r.yield_per_piece, r.ddt,
               r.process_loss_pct, r.bake_loss_pct, r.autolyse,
-              r.mixer_profile_id, r.mix_type,
+              r.mixer_profile_id, r.mix_type, r.dough_type,
               r.created_at, r.updated_at,
               (SELECT COUNT(*) FROM recipe_ingredients WHERE recipe_id = r.id) as ingredient_count,
-              (SELECT COUNT(*) FROM process_steps WHERE recipe_id = r.id) as step_count
+              (SELECT COUNT(*) FROM process_steps WHERE recipe_id = r.id) as step_count,
+              (SELECT COUNT(*) FROM recipe_companions WHERE recipe_id = r.id) as companion_count
        FROM recipes r
        WHERE r.bakery_id = ?
        ORDER BY r.updated_at DESC`
@@ -654,7 +679,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
     db.prepare(
       `UPDATE recipes SET name = ?, yield_per_piece = ?, ddt = ?,
        process_loss_pct = ?, bake_loss_pct = ?, autolyse = ?, autolyse_duration_min = ?,
-       mixer_profile_id = ?, mix_type = ?, autolyse_overrides = ?,
+       mixer_profile_id = ?, mix_type = ?, autolyse_overrides = ?, dough_type = ?,
        version = version + 1, updated_at = datetime('now')
        WHERE id = ? AND bakery_id = ?`
     ).run(
@@ -668,6 +693,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
       data.mixer_profile_id || null,
       data.mix_type || 'Improved Mix',
       JSON.stringify(data.autolyse_overrides || {}),
+      data.dough_type || null,
       id,
       bakeryId
     )
@@ -745,6 +771,32 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
         )
       }
     }
+
+    // Delete + reinsert companion links
+    db.prepare('DELETE FROM recipe_companions WHERE recipe_id = ?').run(id)
+    if (data.companions?.length) {
+      const insertComp = db.prepare(
+        `INSERT INTO recipe_companions (id, recipe_id, companion_recipe_id, role, sort_order, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      for (const [idx, c] of data.companions.entries()) {
+        // Defense in depth: prevent self-link
+        if (c.companion_recipe_id === id) continue
+        // Defense in depth: verify companion recipe belongs to same bakery
+        const companionRecipe = db
+          .prepare('SELECT id FROM recipes WHERE id = ? AND bakery_id = ?')
+          .get(c.companion_recipe_id, bakeryId)
+        if (!companionRecipe) continue
+        insertComp.run(
+          generateId(),
+          id,
+          c.companion_recipe_id,
+          c.role || 'other',
+          idx,
+          c.notes || null
+        )
+      }
+    }
   })
 
   txn()
@@ -772,6 +824,7 @@ export function buildRecipeSnapshot(recipe) {
     name: recipe.name,
     yield_per_piece: recipe.yield_per_piece,
     ddt: recipe.ddt,
+    dough_type: recipe.dough_type ?? null,
     autolyse: recipe.autolyse,
     autolyse_duration_min: recipe.autolyse_duration_min,
     autolyse_overrides: recipe.autolyse_overrides || {},
@@ -798,6 +851,13 @@ export function buildRecipeSnapshot(recipe) {
       temperature: s.temperature,
       mixer_speed: s.mixer_speed,
       notes: s.notes,
+    })),
+    companions: (recipe.companions || []).map((c) => ({
+      companion_recipe_id: c.companion_recipe_id,
+      companion_name: c.companion_name,
+      role: c.role,
+      sort_order: c.sort_order,
+      notes: c.notes,
     })),
   }
 }

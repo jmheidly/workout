@@ -265,6 +265,37 @@
     }
   }
 
+  // Accompanied Recipes (§16)
+  let companions = $state(
+    (data.recipe.companions || []).map((c) => ({ ...c }))
+  )
+
+  const COMPANION_ROLES = ['filling', 'glaze', 'garnish', 'other']
+
+  let availableRecipes = $derived(
+    (data.bakeryRecipes || []).filter(
+      (r) =>
+        r.id !== data.recipe.id &&
+        !companions.some((c) => c.companion_recipe_id === r.id)
+    )
+  )
+
+  function addCompanion(companionRecipeId, role = 'other') {
+    const recipe = (data.bakeryRecipes || []).find((r) => r.id === companionRecipeId)
+    if (!recipe) return
+    companions.push({
+      companion_recipe_id: companionRecipeId,
+      companion_name: recipe.name,
+      companion_dough_type: recipe.dough_type,
+      role,
+      notes: '',
+    })
+  }
+
+  function removeCompanion(idx) {
+    companions.splice(idx, 1)
+  }
+
   // Process Steps (§10)
   let processSteps = $state(
     (data.recipe.process_steps || []).map((s) => ({ ...s }))
@@ -385,6 +416,12 @@
         mixer_speed: s.mixer_speed,
         notes: s.notes,
       })),
+      companions: companions.map((c, idx) => ({
+        companion_recipe_id: c.companion_recipe_id,
+        role: c.role,
+        sort_order: idx,
+        notes: c.notes,
+      })),
     }
   }
 
@@ -413,6 +450,10 @@
         : null,
     }))
     processSteps = (s.process_steps || []).map((step) => ({ ...step }))
+    companions = (s.companions || []).map((c) => {
+      const recipe = (data.bakeryRecipes || []).find((r) => r.id === c.companion_recipe_id)
+      return { ...c, companion_name: recipe?.name || '(deleted)', companion_dough_type: recipe?.dough_type || null }
+    })
     changeNotes = ''
     pfGrams = initPfGrams()
     scheduleCalc()
@@ -1711,6 +1752,7 @@
     {/if}
   {/if}
 
+  {#if recipeReady}
   <!-- ── Process Steps ──────────────────────────────────── -->
 
   <Card>
@@ -1845,5 +1887,98 @@
       </CardContent>
     {/if}
   </Card>
+
+  <!-- ── Accompanied Recipes (§16) ──────────────────────── -->
+
+  <Card>
+    <CardHeader class="flex-row items-center justify-between space-y-0">
+      <CardTitle class="flex items-center gap-2">
+        {@render sectionIcon('M16 3h5v5 M8 3H3v5 M3 16v5h5 M21 16v5h-5')}
+        Accompanied Recipes
+      </CardTitle>
+    </CardHeader>
+
+    {#if companions.length === 0 && !data.canEdit}
+      <CardContent class="pt-0">
+        <p class="text-sm text-muted-foreground">No companion recipes linked.</p>
+      </CardContent>
+    {:else if companions.length === 0}
+      <CardContent class="pt-0">
+        <div class="flex flex-col items-center rounded-lg border border-dashed border-border py-8 text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2 text-muted-foreground/50"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/></svg>
+          <p class="text-sm text-muted-foreground">No companion recipes yet.</p>
+          <p class="text-xs text-muted-foreground/70">Link glazes, fillings, or garnishes that accompany this recipe.</p>
+        </div>
+      </CardContent>
+    {:else}
+      <CardContent class="p-0">
+        <div class="divide-y divide-border">
+          {#each companions as comp, idx}
+            <div class="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/20">
+              <div class="flex-1 min-w-0">
+                <a
+                  href="/recipes/{comp.companion_recipe_id}"
+                  class="text-sm font-medium text-foreground hover:underline"
+                >
+                  {comp.companion_name}
+                </a>
+                {#if comp.companion_dough_type}
+                  <span class="ml-2 text-xs text-muted-foreground">
+                    {comp.companion_dough_type}
+                  </span>
+                {/if}
+              </div>
+
+              {#if data.canEdit}
+                <select
+                  value={comp.role}
+                  onchange={(e) => { comp.role = e.target.value }}
+                  class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+                >
+                  {#each COMPANION_ROLES as role}
+                    <option value={role}>{role}</option>
+                  {/each}
+                </select>
+                <input
+                  type="text"
+                  bind:value={comp.notes}
+                  placeholder="Notes..."
+                  class="w-32 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+                />
+                <span class="opacity-0 group-hover:opacity-100 transition-opacity">
+                  {@render removeBtn(() => removeCompanion(idx), 'Remove companion')}
+                </span>
+              {:else}
+                <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
+                {#if comp.notes}
+                  <span class="text-xs text-muted-foreground">{comp.notes}</span>
+                {/if}
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </CardContent>
+    {/if}
+
+    {#if data.canEdit && availableRecipes.length > 0}
+      <CardFooter class="border-t border-border pt-3">
+        <select
+          onchange={(e) => {
+            if (e.target.value) {
+              addCompanion(e.target.value)
+              e.target.value = ''
+            }
+          }}
+          class="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none ring-ring transition-shadow focus:ring-1"
+        >
+          <option value="">+ Add companion...</option>
+          {#each availableRecipes as r}
+            <option value={r.id}>{r.name}</option>
+          {/each}
+        </select>
+      </CardFooter>
+    {/if}
+  </Card>
+  {/if}
 </div>
 

@@ -1,8 +1,23 @@
 <script>
   import { enhance } from '$app/forms'
+  import {
+    DOUGH_TYPE_LABELS,
+    DOUGH_TYPE_GROUPS,
+    DOUGH_TYPE_DEFAULTS,
+  } from '$lib/dough-types.js'
 
   let { form } = $props()
   let loading = $state(false)
+  let doughType = $state(form?.dough_type ?? '')
+  let ddt = $state(form?.ddt ?? 24)
+
+  function onDoughTypeChange(e) {
+    doughType = e.target.value
+    if (doughType && DOUGH_TYPE_DEFAULTS[doughType]) {
+      const defaults = DOUGH_TYPE_DEFAULTS[doughType]
+      if (defaults.ddt != null) ddt = defaults.ddt
+    }
+  }
 </script>
 
 <div class="mx-auto max-w-md">
@@ -24,6 +39,26 @@
       }
     }}
   >
+    <div class="mb-4">
+      <label for="dough_type" class="mb-1.5 block text-sm font-medium">Dough type</label>
+      <select
+        id="dough_type"
+        name="dough_type"
+        value={doughType}
+        onchange={onDoughTypeChange}
+        class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-2"
+      >
+        <option value="">— Select (optional) —</option>
+        {#each Object.entries(DOUGH_TYPE_GROUPS) as [group, types]}
+          <optgroup label={group}>
+            {#each types as t}
+              <option value={t}>{DOUGH_TYPE_LABELS[t]}</option>
+            {/each}
+          </optgroup>
+        {/each}
+      </select>
+    </div>
+
     <div class="mb-4">
       <label for="name" class="mb-1.5 block text-sm font-medium">Recipe name</label>
       <input
@@ -62,7 +97,7 @@
         type="number"
         step="any"
         min="0"
-        value={form?.ddt ?? 24}
+        bind:value={ddt}
         class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-2"
       />
     </div>

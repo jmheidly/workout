@@ -1,3 +1,5 @@
+import { DOUGH_TYPE_LABELS } from './dough-types.js'
+
 /**
  * §12.6 — Diff two recipe version snapshots.
  *
@@ -18,6 +20,7 @@ export function diffVersions(snapshotA, snapshotB) {
     'name',
     'yield_per_piece',
     'ddt',
+    'dough_type',
     'autolyse',
     'autolyse_duration_min',
     'process_loss_pct',
@@ -189,6 +192,56 @@ export function diffVersions(snapshotA, snapshotB) {
     }
   }
 
+  // ── Companion changes (matched by companion_recipe_id) ──
+  const aComps = snapshotA.companions || []
+  const bComps = snapshotB.companions || []
+  const aCompById = Object.fromEntries(aComps.map((c) => [c.companion_recipe_id, c]))
+  const bCompById = Object.fromEntries(bComps.map((c) => [c.companion_recipe_id, c]))
+  const aCompIds = new Set(aComps.map((c) => c.companion_recipe_id))
+  const bCompIds = new Set(bComps.map((c) => c.companion_recipe_id))
+
+  for (const cid of bCompIds) {
+    if (!aCompIds.has(cid)) {
+      changes.push({
+        type: 'companion_added',
+        companion_recipe_id: cid,
+        name: bCompById[cid].companion_name,
+        role: bCompById[cid].role,
+      })
+    }
+  }
+
+  for (const cid of aCompIds) {
+    if (!bCompIds.has(cid)) {
+      changes.push({
+        type: 'companion_removed',
+        companion_recipe_id: cid,
+        name: aCompById[cid].companion_name,
+        role: aCompById[cid].role,
+      })
+    }
+  }
+
+  for (const cid of aCompIds) {
+    if (!bCompIds.has(cid)) continue
+    const a = aCompById[cid]
+    const b = bCompById[cid]
+    for (const field of ['role', 'sort_order', 'notes']) {
+      const oldVal = a[field] ?? null
+      const newVal = b[field] ?? null
+      if (oldVal !== newVal) {
+        changes.push({
+          type: 'companion_modified',
+          companion_recipe_id: cid,
+          name: b.companion_name,
+          field,
+          old: oldVal,
+          new: newVal,
+        })
+      }
+    }
+  }
+
   return changes
 }
 
@@ -226,6 +279,9 @@ export function summarizeChanges(changes) {
       parts.push(`Process loss ${fmtPct(c.old)} → ${fmtPct(c.new)}`)
     } else if (c.field === 'bake_loss_pct') {
       parts.push(`Bake loss ${fmtPct(c.old)} → ${fmtPct(c.new)}`)
+    } else if (c.field === 'dough_type') {
+      const label = DOUGH_TYPE_LABELS[c.new] || c.new || 'None'
+      parts.push(`Dough type → ${label}`)
     } else if (c.field === 'mix_type') {
       parts.push(`Mix type → ${c.new}`)
     } else if (c.field === 'mixer_profile_id') {
@@ -282,6 +338,22 @@ export function summarizeChanges(changes) {
   if (stepsModified.length) {
     const uniqueSteps = [...new Set(stepsModified.map((c) => c.name))]
     parts.push(`Updated step${uniqueSteps.length > 1 ? 's' : ''}: ${uniqueSteps.join(', ')}`)
+  }
+
+  // Companion changes
+  const compsAdded = changes.filter((c) => c.type === 'companion_added')
+  const compsRemoved = changes.filter((c) => c.type === 'companion_removed')
+  const compsModified = changes.filter((c) => c.type === 'companion_modified')
+
+  if (compsAdded.length) {
+    parts.push(`Added companion${compsAdded.length > 1 ? 's' : ''}: ${compsAdded.map((c) => c.name).join(', ')}`)
+  }
+  if (compsRemoved.length) {
+    parts.push(`Removed companion${compsRemoved.length > 1 ? 's' : ''}: ${compsRemoved.map((c) => c.name).join(', ')}`)
+  }
+  if (compsModified.length) {
+    const uniqueComps = [...new Set(compsModified.map((c) => c.name))]
+    parts.push(`Updated companion${uniqueComps.length > 1 ? 's' : ''}: ${uniqueComps.join(', ')}`)
   }
 
   if (!parts.length) {

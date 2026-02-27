@@ -500,4 +500,71 @@
       {/if}
     </CardContent>
   </Card>
+
+  <!-- ── Accompanied Recipes ─────────────────────────────── -->
+
+  {#if data.companionDetails && data.companionDetails.length > 0}
+    <Card>
+      <CardHeader class="pb-4">
+        <CardTitle class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/></svg>
+          Accompanied Recipes
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div class="space-y-6">
+          {#each data.companionDetails as comp}
+            <div>
+              <div class="mb-3 flex items-center gap-2">
+                <a href="/recipes/{comp.companion_recipe_id}" class="text-sm font-semibold hover:underline">{comp.companion_name}</a>
+                <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
+                {#if comp.notes}
+                  <span class="text-xs text-muted-foreground">{comp.notes}</span>
+                {/if}
+              </div>
+
+              {#if comp.calculated}
+                <div class="overflow-x-auto rounded-lg border border-border">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
+                        <th class="px-3 py-2 font-medium">Ingredient</th>
+                        <th class="px-3 py-2 font-medium text-right">BP %</th>
+                        <th class="px-3 py-2 font-medium text-right">Qty (g)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {#each comp.calculated.ingredients as ing}
+                        <tr class="border-b border-border last:border-b-0">
+                          <td class="px-3 py-1.5">
+                            <span class="font-medium">{ing.name}</span>
+                            <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">{ing.category}</Badge>
+                          </td>
+                          <td class="px-3 py-1.5 text-right tabular-nums">{(ing.overall_bakers_pct * 100).toFixed(1)}%</td>
+                          <td class="px-3 py-1.5 text-right tabular-nums">{formatGrams(ing.batch_qty)}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                    <tfoot>
+                      <tr class="border-t border-border bg-muted/30 font-medium">
+                        <td class="px-3 py-1.5">Total</td>
+                        <td class="px-3 py-1.5 text-right tabular-nums">
+                          {(comp.calculated.ingredients.reduce((s, i) => s + (i.overall_bakers_pct || 0), 0) * 100).toFixed(1)}%
+                        </td>
+                        <td class="px-3 py-1.5 text-right tabular-nums">
+                          {formatGrams(comp.calculated.totals.total_weight)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              {:else}
+                <p class="text-sm text-muted-foreground">Unable to calculate companion recipe.</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
 </div>
