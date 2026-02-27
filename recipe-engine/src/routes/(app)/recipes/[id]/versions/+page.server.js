@@ -1,5 +1,12 @@
 import { error } from '@sveltejs/kit'
-import { getRecipe, getRecipeVersions, getRecipeVersionCount, getRecipeVersion, buildRecipeSnapshot, getMixerProfiles } from '$lib/server/db.js'
+import {
+  getRecipe,
+  getRecipeVersions,
+  getRecipeVersionCount,
+  getRecipeVersion,
+  buildRecipeSnapshot,
+  getMixerProfiles,
+} from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { diffVersions, summarizeChanges } from '$lib/version-diff.js'
 
@@ -79,7 +86,11 @@ export function load({ params, locals, url }) {
       try {
         calcA = calculateRecipe(recipe)
       } catch {}
-      metaA = { version_number: recipe.version, created_at: recipe.updated_at, isCurrent: true }
+      metaA = {
+        version_number: recipe.version,
+        created_at: recipe.updated_at,
+        isCurrent: true,
+      }
     } else {
       const verA = getRecipeVersion(params.id, aNum)
       if (verA) {
@@ -105,7 +116,11 @@ export function load({ params, locals, url }) {
       try {
         calcB = calculateRecipe(recipe)
       } catch {}
-      metaB = { version_number: recipe.version, created_at: recipe.updated_at, isCurrent: true }
+      metaB = {
+        version_number: recipe.version,
+        created_at: recipe.updated_at,
+        isCurrent: true,
+      }
     } else {
       const verB = getRecipeVersion(params.id, bNum)
       if (verB) {
@@ -131,7 +146,9 @@ export function load({ params, locals, url }) {
   }
 
   const mixerProfiles = getMixerProfiles(locals.bakery.id)
-  const mixerNameMap = Object.fromEntries(mixerProfiles.map((m) => [m.id, m.name]))
+  const mixerNameMap = Object.fromEntries(
+    mixerProfiles.map((m) => [m.id, m.name])
+  )
 
   // Build per-version change summaries by diffing adjacent snapshots
   // versions is sorted DESC — [0] is newest on this page, last is oldest on this page
@@ -144,7 +161,10 @@ export function load({ params, locals, url }) {
       if (newestVer) {
         const newestSnapshot = JSON.parse(newestVer.snapshot)
         const changes = diffVersions(newestSnapshot, currentSnapshot)
-        changeSummaries[recipe.version] = resolveChangeSummary(changes, mixerNameMap)
+        changeSummaries[recipe.version] = resolveChangeSummary(
+          changes,
+          mixerNameMap
+        )
       }
     }
 
@@ -153,8 +173,14 @@ export function load({ params, locals, url }) {
       const newer = getRecipeVersion(params.id, versions[i].version_number)
       const older = getRecipeVersion(params.id, versions[i + 1].version_number)
       if (newer && older) {
-        const changes = diffVersions(JSON.parse(older.snapshot), JSON.parse(newer.snapshot))
-        changeSummaries[versions[i].version_number] = resolveChangeSummary(changes, mixerNameMap)
+        const changes = diffVersions(
+          JSON.parse(older.snapshot),
+          JSON.parse(newer.snapshot)
+        )
+        changeSummaries[versions[i].version_number] = resolveChangeSummary(
+          changes,
+          mixerNameMap
+        )
       }
     }
 
@@ -164,14 +190,25 @@ export function load({ params, locals, url }) {
       const olderVer = getRecipeVersion(params.id, oldest.version_number - 1)
       const thisVer = getRecipeVersion(params.id, oldest.version_number)
       if (olderVer && thisVer) {
-        const changes = diffVersions(JSON.parse(olderVer.snapshot), JSON.parse(thisVer.snapshot))
-        changeSummaries[oldest.version_number] = resolveChangeSummary(changes, mixerNameMap)
+        const changes = diffVersions(
+          JSON.parse(olderVer.snapshot),
+          JSON.parse(thisVer.snapshot)
+        )
+        changeSummaries[oldest.version_number] = resolveChangeSummary(
+          changes,
+          mixerNameMap
+        )
       }
     }
   }
 
   return {
-    recipe, versions, viewData, compareData, mixerProfiles, changeSummaries,
+    recipe,
+    versions,
+    viewData,
+    compareData,
+    mixerProfiles,
+    changeSummaries,
     pagination: { page, pageSize: PAGE_SIZE, totalCount, totalPages },
   }
 }

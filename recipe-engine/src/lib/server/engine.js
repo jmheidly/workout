@@ -34,29 +34,46 @@ import { MIXING_PHASES, classifyAllIngredients } from '$lib/mixing-phases.js'
  */
 export function calculateRecipe(recipe) {
   const ingredients = recipe.ingredients || []
-  const prefermentIngredients = ingredients.filter((i) => i.category === 'PREFERMENT')
-  const nonPfIngredients = ingredients.filter((i) => i.category !== 'PREFERMENT')
-  const flourIngredients = ingredients.filter((i) => i.category === 'FLOUR')
-  const baseFlourQty = flourIngredients.reduce((sum, i) => sum + i.base_qty, 0)
+  const baseCat = recipe.base_ingredient_category || 'FLOUR'
+  const prefermentIngredients = ingredients.filter(
+    (i) => i.category === 'PREFERMENT'
+  )
+  const nonPfIngredients = ingredients.filter(
+    (i) => i.category !== 'PREFERMENT'
+  )
+  const baseIngredients = ingredients.filter((i) => i.category === baseCat)
+  const baseQty = baseIngredients.reduce((sum, i) => sum + i.base_qty, 0)
 
   // §5.5: Resolve pre-ferment calculation order (topological sort)
   const pfOrder = resolvePrefermentOrder(prefermentIngredients)
 
   // Build preferment map for quick lookup
-  const pfMap = Object.fromEntries(prefermentIngredients.map((pf) => [pf.id, pf]))
+  const pfMap = Object.fromEntries(
+    prefermentIngredients.map((pf) => [pf.id, pf])
+  )
 
   // Calculate pre-ferment breakdowns in dependency order
   // pfBreakdowns[pf_id] = { ingredientId: qty }
   const pfBreakdowns = {}
   for (const pfId of pfOrder) {
     const pf = pfMap[pfId]
-    pfBreakdowns[pfId] = calcPrefermentBreakdown(pf, ingredients, pfMap, pfBreakdowns, baseFlourQty)
+    pfBreakdowns[pfId] = calcPrefermentBreakdown(
+      pf,
+      ingredients,
+      pfMap,
+      pfBreakdowns,
+      baseQty
+    )
   }
 
   // §4.7: Total formula quantities (for non-PF ingredients)
   const totalFormulaQtys = {}
   for (const ing of ingredients) {
-    totalFormulaQtys[ing.id] = calcTotalFormulaQty(ing, pfBreakdowns, prefermentIngredients)
+    totalFormulaQtys[ing.id] = calcTotalFormulaQty(
+      ing,
+      pfBreakdowns,
+      prefermentIngredients
+    )
   }
 
   // §4.6v2: Final dough quantities (computed from pre-decomposition TFQ)
@@ -93,14 +110,14 @@ export function calculateRecipe(recipe) {
     }
   }
 
-  // Total formula flour for §4.8
-  const totalFormulaFlour = flourIngredients.reduce(
+  // Total formula base for §4.8
+  const totalFormulaBase = baseIngredients.reduce(
     (sum, i) => sum + totalFormulaQtys[i.id],
     0
   )
 
-  // Final dough flour total for §4.9
-  const finalDoughFlour = flourIngredients.reduce(
+  // Final dough base total for §4.9
+  const finalDoughBase = baseIngredients.reduce(
     (sum, i) => sum + finalDoughQtys[i.id],
     0
   )
@@ -117,7 +134,11 @@ export function calculateRecipe(recipe) {
   // §11: Loss & Waste — compute raw yield per piece
   const processLossPct = recipe.process_loss_pct || 0
   const bakeLossPct = recipe.bake_loss_pct || 0
-  const rawYieldPerPiece = calcAdjustedYield(recipe.yield_per_piece, processLossPct, bakeLossPct)
+  const rawYieldPerPiece = calcAdjustedYield(
+    recipe.yield_per_piece,
+    processLossPct,
+    bakeLossPct
+  )
   const scaleFactor = safeDivide(rawYieldPerPiece, recipe.yield_per_piece, 1)
 
   // num_pieces §4.11 — use raw yield when loss factors are set
@@ -126,14 +147,17 @@ export function calculateRecipe(recipe) {
   // Build per-ingredient calculated values
   const calculatedIngredients = ingredients.map((ing) => {
     // §4.2: Overall Baker's % (TFQ-based — matches spreadsheet Column C)
-    const overallBakersPct = safeDivide(totalFormulaQtys[ing.id], totalFormulaFlour)
+    const overallBakersPct = safeDivide(
+      totalFormulaQtys[ing.id],
+      totalFormulaBase
+    )
 
     // §4.9: Final dough Baker's %
     let finalDoughBakersPct
-    if (ing.category === 'FLOUR') {
-      finalDoughBakersPct = safeDivide(ing.base_qty, baseFlourQty)
+    if (ing.category === baseCat) {
+      finalDoughBakersPct = safeDivide(ing.base_qty, baseQty)
     } else {
-      finalDoughBakersPct = safeDivide(ing.base_qty, finalDoughFlour)
+      finalDoughBakersPct = safeDivide(ing.base_qty, finalDoughBase)
     }
 
     // §4.10: Per-item weight (uses raw yield to account for loss)
@@ -163,7 +187,7 @@ export function calculateRecipe(recipe) {
       final_dough_qty: finalDoughQtys[ing.id],
       per_item_weight: perItemWeight,
       batch_qty: batchQty,
-      preferment_qtys: prefermentQtys
+      preferment_qtys: prefermentQtys,
     }
   })
 
@@ -171,7 +195,7 @@ export function calculateRecipe(recipe) {
   const preferments = prefermentIngredients.map((pf) => {
     const settings = pf.preferment_settings || { enabled: 1, type: 'CUSTOM' }
     const enabled = settings.enabled === 1 || settings.enabled === true
-    const ratio = enabled ? safeDivide(pf.base_qty, baseFlourQty) : 0
+    const ratio = enabled ? safeDivide(pf.base_qty, baseQty) : 0
     const breakdown = pfBreakdowns[pf.id] || {}
 
     // Total baker's pct for this PF
@@ -187,14 +211,14 @@ export function calculateRecipe(recipe) {
       if (ing) namedBreakdown[ing.name] = qty
     }
 
-    // §4.13: Pre-fermented flour %
+    // §4.13: Pre-fermented base %
     let prefermentedFlourPct = 0
-    if (enabled && totalFormulaFlour > 0) {
-      const pfFlour = Object.entries(breakdown).reduce((sum, [ingId, qty]) => {
+    if (enabled && totalFormulaBase > 0) {
+      const pfBase = Object.entries(breakdown).reduce((sum, [ingId, qty]) => {
         const ing = ingredients.find((i) => i.id === ingId)
-        return ing && ing.category === 'FLOUR' ? sum + qty : sum
+        return ing && ing.category === baseCat ? sum + qty : sum
       }, 0)
-      prefermentedFlourPct = safeDivide(pfFlour, totalFormulaFlour)
+      prefermentedFlourPct = safeDivide(pfBase, totalFormulaBase)
     }
 
     return {
@@ -205,7 +229,7 @@ export function calculateRecipe(recipe) {
       ratio,
       total_bakers_pct: totalBakersPct,
       breakdown: namedBreakdown,
-      prefermented_flour_pct: prefermentedFlourPct
+      prefermented_flour_pct: prefermentedFlourPct,
     }
   })
 
@@ -213,7 +237,7 @@ export function calculateRecipe(recipe) {
   const totalWater = ingredients
     .filter((i) => i.category === 'LIQUID')
     .reduce((sum, i) => sum + totalFormulaQtys[i.id], 0)
-  const hydration = safeDivide(totalWater, totalFormulaFlour)
+  const hydration = safeDivide(totalWater, totalFormulaBase)
 
   // §4.13: Total pre-fermented flour %
   const totalPrefermentedFlourPct = preferments.reduce(
@@ -224,7 +248,12 @@ export function calculateRecipe(recipe) {
   // §8: Autolyse split
   let autolyse = null
   if (recipe.autolyse) {
-    autolyse = calcAutolyseSplit(ingredients, finalDoughQtys, recipe.autolyse_duration_min || 20, recipe.autolyse_overrides || {})
+    autolyse = calcAutolyseSplit(
+      ingredients,
+      finalDoughQtys,
+      recipe.autolyse_duration_min || 20,
+      recipe.autolyse_overrides || {}
+    )
   }
 
   return {
@@ -234,16 +263,16 @@ export function calculateRecipe(recipe) {
     totals: {
       hydration,
       total_weight: totalRecipeWeight,
-      total_flour: baseFlourQty,
-      total_formula_flour: totalFormulaFlour,
+      total_flour: baseQty,
+      total_formula_flour: totalFormulaBase,
       total_final_dough_weight: totalFinalDoughWeight,
       num_pieces: numPieces,
       total_prefermented_flour_pct: totalPrefermentedFlourPct,
       raw_yield_per_piece: rawYieldPerPiece,
       scale_factor: scaleFactor,
       process_loss_pct: processLossPct,
-      bake_loss_pct: bakeLossPct
-    }
+      bake_loss_pct: bakeLossPct,
+    },
   }
 }
 
@@ -260,7 +289,13 @@ export function calculateRecipe(recipe) {
  * @param {number} baseFlourQty
  * @returns {Object.<string, number>}
  */
-function calcPrefermentBreakdown(pf, allIngredients, pfMap, pfBreakdowns, baseFlourQty) {
+function calcPrefermentBreakdown(
+  pf,
+  allIngredients,
+  pfMap,
+  pfBreakdowns,
+  baseFlourQty
+) {
   const settings = pf.preferment_settings || { enabled: 1 }
   const enabled = settings.enabled === 1 || settings.enabled === true
 
@@ -317,7 +352,12 @@ function calcTotalFormulaQty(ingredient, pfBreakdowns, prefermentIngredients) {
  * @param {Ingredient[]} prefermentIngredients
  * @returns {number}
  */
-function calcFinalDoughQty(ingredient, totalFormulaQty, pfBreakdowns, prefermentIngredients) {
+function calcFinalDoughQty(
+  ingredient,
+  totalFormulaQty,
+  pfBreakdowns,
+  prefermentIngredients
+) {
   // PREFERMENT rows: their final dough qty IS their base_qty
   if (ingredient.category === 'PREFERMENT') return ingredient.base_qty
 
@@ -382,7 +422,12 @@ function calcAdjustedYield(desired, processLoss, bakeLoss) {
  * @param {Object.<string, 'autolyse'|'final'>} [overrides={}]
  * @returns {{ autolyse_ingredients: Array<{id: string, name: string, qty: number}>, final_mix_ingredients: Array<{id: string, name: string, qty: number}>, autolyse_duration_min: number }}
  */
-function calcAutolyseSplit(ingredients, finalDoughQtys, durationMin, overrides = {}) {
+function calcAutolyseSplit(
+  ingredients,
+  finalDoughQtys,
+  durationMin,
+  overrides = {}
+) {
   const { phases: phaseMap } = classifyAllIngredients(ingredients)
   const autolyseIngredients = []
   const finalMixIngredients = []

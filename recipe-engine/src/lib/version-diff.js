@@ -27,6 +27,7 @@ export function diffVersions(snapshotA, snapshotB) {
     'bake_loss_pct',
     'mix_type',
     'mixer_profile_id',
+    'base_ingredient_category',
   ]
 
   for (const field of RECIPE_FIELDS) {
@@ -41,7 +42,12 @@ export function diffVersions(snapshotA, snapshotB) {
   const aOverrides = snapshotA.autolyse_overrides || {}
   const bOverrides = snapshotB.autolyse_overrides || {}
   if (JSON.stringify(aOverrides) !== JSON.stringify(bOverrides)) {
-    changes.push({ type: 'param_changed', field: 'autolyse_overrides', old: aOverrides, new: bOverrides })
+    changes.push({
+      type: 'param_changed',
+      field: 'autolyse_overrides',
+      old: aOverrides,
+      new: bOverrides,
+    })
   }
 
   // ── Ingredient changes (UUID-matched) ──────────────────────
@@ -162,13 +168,21 @@ export function diffVersions(snapshotA, snapshotB) {
 
   for (const id of bStepIds) {
     if (!aStepIds.has(id)) {
-      changes.push({ type: 'step_added', step_id: id, name: bStepById[id].title })
+      changes.push({
+        type: 'step_added',
+        step_id: id,
+        name: bStepById[id].title,
+      })
     }
   }
 
   for (const id of aStepIds) {
     if (!bStepIds.has(id)) {
-      changes.push({ type: 'step_removed', step_id: id, name: aStepById[id].title })
+      changes.push({
+        type: 'step_removed',
+        step_id: id,
+        name: aStepById[id].title,
+      })
     }
   }
 
@@ -176,7 +190,14 @@ export function diffVersions(snapshotA, snapshotB) {
     if (!bStepIds.has(id)) continue
     const a = aStepById[id]
     const b = bStepById[id]
-    for (const field of ['title', 'stage', 'duration_min', 'temperature', 'sort_order']) {
+    for (const field of [
+      'title',
+      'stage',
+      'duration_min',
+      'temperature',
+      'sort_order',
+      'preferment_ingredient_id',
+    ]) {
       const oldVal = a[field] ?? null
       const newVal = b[field] ?? null
       if (oldVal !== newVal) {
@@ -195,8 +216,12 @@ export function diffVersions(snapshotA, snapshotB) {
   // ── Companion changes (matched by companion_recipe_id) ──
   const aComps = snapshotA.companions || []
   const bComps = snapshotB.companions || []
-  const aCompById = Object.fromEntries(aComps.map((c) => [c.companion_recipe_id, c]))
-  const bCompById = Object.fromEntries(bComps.map((c) => [c.companion_recipe_id, c]))
+  const aCompById = Object.fromEntries(
+    aComps.map((c) => [c.companion_recipe_id, c])
+  )
+  const bCompById = Object.fromEntries(
+    bComps.map((c) => [c.companion_recipe_id, c])
+  )
   const aCompIds = new Set(aComps.map((c) => c.companion_recipe_id))
   const bCompIds = new Set(bComps.map((c) => c.companion_recipe_id))
 
@@ -226,7 +251,7 @@ export function diffVersions(snapshotA, snapshotB) {
     if (!bCompIds.has(cid)) continue
     const a = aCompById[cid]
     const b = bCompById[cid]
-    for (const field of ['role', 'sort_order', 'notes']) {
+    for (const field of ['role', 'qty', 'sort_order', 'notes']) {
       const oldVal = a[field] ?? null
       const newVal = b[field] ?? null
       if (oldVal !== newVal) {
@@ -294,6 +319,8 @@ export function summarizeChanges(changes) {
       parts.push(`Autolyse ${c.old}min → ${c.new}min`)
     } else if (c.field === 'autolyse_overrides') {
       parts.push('Updated autolyse split')
+    } else if (c.field === 'base_ingredient_category') {
+      parts.push(`Base category ${c.old || 'FLOUR'} \u2192 ${c.new || 'FLOUR'}`)
     }
   }
 
@@ -305,39 +332,75 @@ export function summarizeChanges(changes) {
     parts.push(`Removed ${removed.map((c) => c.name).join(', ')}`)
   }
   if (renamed.length) {
-    parts.push(renamed.map((c) => `Renamed ${c.old_name} → ${c.new_name}`).join(', '))
+    parts.push(
+      renamed.map((c) => `Renamed ${c.old_name} → ${c.new_name}`).join(', ')
+    )
   }
 
   // Quantity changes (most common for bakeries)
   const qtyChanges = modified.filter((c) => c.field === 'base_qty')
   if (qtyChanges.length) {
-    parts.push(qtyChanges.map((c) => `${c.name}: ${c.old}g → ${c.new}g`).join(', '))
+    parts.push(
+      qtyChanges.map((c) => `${c.name}: ${c.old}g → ${c.new}g`).join(', ')
+    )
   }
 
   // Preferment settings changes
   const pfTypeChanges = modified.filter((c) => c.field === 'pf_type')
   if (pfTypeChanges.length) {
-    parts.push(pfTypeChanges.map((c) => `${c.name} type: ${c.old} → ${c.new}`).join(', '))
+    parts.push(
+      pfTypeChanges.map((c) => `${c.name} type: ${c.old} → ${c.new}`).join(', ')
+    )
   }
   const pfDdtChanges = modified.filter((c) => c.field === 'pf_ddt')
   if (pfDdtChanges.length) {
-    parts.push(pfDdtChanges.map((c) => `${c.name} DDT: ${c.old ?? 'inherit'}°C → ${c.new ?? 'inherit'}°C`).join(', '))
+    parts.push(
+      pfDdtChanges
+        .map(
+          (c) =>
+            `${c.name} DDT: ${c.old ?? 'inherit'}°C → ${c.new ?? 'inherit'}°C`
+        )
+        .join(', ')
+    )
   }
-  const pfFermChanges = modified.filter((c) => c.field === 'pf_fermentation_duration_min')
+  const pfFermChanges = modified.filter(
+    (c) => c.field === 'pf_fermentation_duration_min'
+  )
   if (pfFermChanges.length) {
-    parts.push(pfFermChanges.map((c) => `${c.name} ferment: ${c.old ?? 'default'} → ${c.new ?? 'default'}min`).join(', '))
+    parts.push(
+      pfFermChanges
+        .map(
+          (c) =>
+            `${c.name} ferment: ${c.old ?? 'default'} → ${
+              c.new ?? 'default'
+            }min`
+        )
+        .join(', ')
+    )
   }
 
   // Step changes
   if (stepsAdded.length) {
-    parts.push(`Added step${stepsAdded.length > 1 ? 's' : ''}: ${stepsAdded.map((c) => c.name).join(', ')}`)
+    parts.push(
+      `Added step${stepsAdded.length > 1 ? 's' : ''}: ${stepsAdded
+        .map((c) => c.name)
+        .join(', ')}`
+    )
   }
   if (stepsRemoved.length) {
-    parts.push(`Removed step${stepsRemoved.length > 1 ? 's' : ''}: ${stepsRemoved.map((c) => c.name).join(', ')}`)
+    parts.push(
+      `Removed step${stepsRemoved.length > 1 ? 's' : ''}: ${stepsRemoved
+        .map((c) => c.name)
+        .join(', ')}`
+    )
   }
   if (stepsModified.length) {
     const uniqueSteps = [...new Set(stepsModified.map((c) => c.name))]
-    parts.push(`Updated step${uniqueSteps.length > 1 ? 's' : ''}: ${uniqueSteps.join(', ')}`)
+    parts.push(
+      `Updated step${uniqueSteps.length > 1 ? 's' : ''}: ${uniqueSteps.join(
+        ', '
+      )}`
+    )
   }
 
   // Companion changes
@@ -346,19 +409,33 @@ export function summarizeChanges(changes) {
   const compsModified = changes.filter((c) => c.type === 'companion_modified')
 
   if (compsAdded.length) {
-    parts.push(`Added companion${compsAdded.length > 1 ? 's' : ''}: ${compsAdded.map((c) => c.name).join(', ')}`)
+    parts.push(
+      `Added companion${compsAdded.length > 1 ? 's' : ''}: ${compsAdded
+        .map((c) => c.name)
+        .join(', ')}`
+    )
   }
   if (compsRemoved.length) {
-    parts.push(`Removed companion${compsRemoved.length > 1 ? 's' : ''}: ${compsRemoved.map((c) => c.name).join(', ')}`)
+    parts.push(
+      `Removed companion${compsRemoved.length > 1 ? 's' : ''}: ${compsRemoved
+        .map((c) => c.name)
+        .join(', ')}`
+    )
   }
   if (compsModified.length) {
     const uniqueComps = [...new Set(compsModified.map((c) => c.name))]
-    parts.push(`Updated companion${uniqueComps.length > 1 ? 's' : ''}: ${uniqueComps.join(', ')}`)
+    parts.push(
+      `Updated companion${
+        uniqueComps.length > 1 ? 's' : ''
+      }: ${uniqueComps.join(', ')}`
+    )
   }
 
   if (!parts.length) {
     // Only PF% or sort_order changes
-    const pfChanges = modified.filter((c) => c.field.startsWith('preferment_pct_'))
+    const pfChanges = modified.filter((c) =>
+      c.field.startsWith('preferment_pct_')
+    )
     if (pfChanges.length) {
       parts.push(`Updated pre-ferment percentages`)
     }

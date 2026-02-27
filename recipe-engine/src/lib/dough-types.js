@@ -19,6 +19,10 @@ export const DOUGH_TYPES = {
   CHOUX: 'CHOUX',
   COOKIE: 'COOKIE',
   PASTA: 'PASTA',
+  TOPPING: 'TOPPING',
+  GLAZE: 'GLAZE',
+  FILLING: 'FILLING',
+  SAUCE: 'SAUCE',
 }
 
 export const DOUGH_TYPE_NAMES = Object.keys(DOUGH_TYPES)
@@ -37,6 +41,10 @@ export const DOUGH_TYPE_LABELS = {
   CHOUX: 'Choux',
   COOKIE: 'Cookie',
   PASTA: 'Pasta',
+  TOPPING: 'Topping',
+  GLAZE: 'Glaze',
+  FILLING: 'Filling',
+  SAUCE: 'Sauce',
 }
 
 export const DOUGH_TYPE_GROUPS = {
@@ -51,6 +59,7 @@ export const DOUGH_TYPE_GROUPS = {
     'FLATBREAD',
   ],
   Pastry: ['SHORTCRUST', 'SWEET_PASTRY', 'CHOUX', 'COOKIE', 'PASTA'],
+  Component: ['TOPPING', 'GLAZE', 'FILLING', 'SAUCE'],
 }
 
 /**
@@ -162,6 +171,38 @@ export const DOUGH_TYPE_DEFAULTS = {
     process_loss_pct: 0.02,
     bake_loss_pct: 0,
   },
+  TOPPING: {
+    ddt: null,
+    autolyse: false,
+    autolyse_duration_min: 0,
+    mix_type: 'Short Mix',
+    process_loss_pct: 0.02,
+    bake_loss_pct: 0,
+  },
+  GLAZE: {
+    ddt: null,
+    autolyse: false,
+    autolyse_duration_min: 0,
+    mix_type: 'Short Mix',
+    process_loss_pct: 0.05,
+    bake_loss_pct: 0,
+  },
+  FILLING: {
+    ddt: null,
+    autolyse: false,
+    autolyse_duration_min: 0,
+    mix_type: 'Short Mix',
+    process_loss_pct: 0.05,
+    bake_loss_pct: 0,
+  },
+  SAUCE: {
+    ddt: null,
+    autolyse: false,
+    autolyse_duration_min: 0,
+    mix_type: 'Short Mix',
+    process_loss_pct: 0.08,
+    bake_loss_pct: 0,
+  },
 }
 
 /**
@@ -174,6 +215,10 @@ export const DOUGH_TYPE_MIX_CONSTRAINTS = {
   SHORTCRUST: ['Short Mix'],
   SWEET_PASTRY: ['Short Mix'],
   COOKIE: ['Short Mix'],
+  TOPPING: ['Short Mix'],
+  GLAZE: ['Short Mix'],
+  FILLING: ['Short Mix'],
+  SAUCE: ['Short Mix'],
 }
 
 /**
@@ -206,20 +251,18 @@ export function inferDoughType(ingredients) {
   const leavening = ingredients.filter((i) => i.category === 'LEAVENING')
   const hasYeast = leavening.some((i) => /yeast/i.test(i.name))
   const hasChemical = leavening.some((i) =>
-    /baking\s*(powder|soda)|bicarb/i.test(i.name),
+    /baking\s*(powder|soda)|bicarb/i.test(i.name)
   )
 
   const hasLevain = ingredients.some(
     (i) =>
       i.category === 'PREFERMENT' &&
       i.preferment_settings?.type === 'LEVAIN' &&
-      i.preferment_settings?.enabled,
+      i.preferment_settings?.enabled
   )
 
   const semolinaFlour = ingredients
-    .filter(
-      (i) => i.category === 'FLOUR' && /semolina|durum/i.test(i.name),
-    )
+    .filter((i) => i.category === 'FLOUR' && /semolina|durum/i.test(i.name))
     .reduce((sum, i) => sum + (i.base_qty || 0), 0)
   const semolinaPct = semolinaFlour / totalFlour
 

@@ -143,6 +143,16 @@
     }
   })
 
+  // ── Process Steps (main vs PF) ───────────────────────
+
+  let mainSteps = $derived(
+    (data.recipe.process_steps || []).filter((s) => !s.preferment_ingredient_id)
+  )
+
+  let pfSteps = $derived(
+    (data.recipe.process_steps || []).filter((s) => s.preferment_ingredient_id)
+  )
+
   // ── Helpers ────────────────────────────────────────────
 
   function formatTime(date) {
@@ -454,6 +464,54 @@
     </CardContent>
   </Card>
 
+  <!-- ── PF Build Steps Card ────────────────────────────── -->
+
+  {#if pfSteps.length > 0}
+    <Card class="border-indigo-200">
+      <CardHeader class="pb-4">
+        <CardTitle class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/></svg>
+          Pre-ferment Build Steps
+        </CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        {#each enabledPfs as pf (pf.id)}
+          {@const stepsForPf = pfSteps.filter((s) => s.preferment_ingredient_id === pf.id)}
+          {#if stepsForPf.length > 0}
+            <div>
+              <div class="mb-2 flex items-center gap-2">
+                <span class="text-sm font-semibold">{pf.name}</span>
+                <Badge variant="secondary" class="bg-indigo-50 text-indigo-700 text-[10px] font-normal">{pf.preferment_settings?.type || 'CUSTOM'}</Badge>
+              </div>
+              <div class="space-y-2">
+                {#each stepsForPf as step, i}
+                  <div class="flex items-start gap-3 rounded-lg border border-indigo-100 bg-indigo-50/30 px-4 py-3">
+                    <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold tabular-nums text-indigo-700">{i + 1}</span>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" class="text-[10px] font-normal border-indigo-200">{step.stage.replace(/_/g, ' ')}</Badge>
+                        <span class="text-sm font-medium">{step.title}</span>
+                        {#if step.duration_min}
+                          <Badge variant="secondary" class="font-normal tabular-nums text-[10px]">{step.duration_min} min</Badge>
+                        {/if}
+                        {#if step.temperature}
+                          <Badge variant="secondary" class="font-normal tabular-nums text-[10px]">{step.temperature}&deg;C</Badge>
+                        {/if}
+                      </div>
+                      {#if step.description}
+                        <p class="mt-1 text-sm text-muted-foreground">{step.description}</p>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        {/each}
+      </CardContent>
+    </Card>
+  {/if}
+
   <!-- ── Process Steps Card ────────────────────────────── -->
 
   <Card>
@@ -464,9 +522,9 @@
       </CardTitle>
     </CardHeader>
     <CardContent>
-      {#if data.recipe.process_steps && data.recipe.process_steps.length > 0}
+      {#if mainSteps.length > 0}
         <div class="space-y-2">
-          {#each data.recipe.process_steps as step, i}
+          {#each mainSteps as step, i}
             <div class="flex items-start gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3">
               <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums">{i + 1}</span>
               <div class="min-w-0 flex-1">
@@ -514,10 +572,12 @@
       <CardContent>
         <div class="space-y-6">
           {#each data.companionDetails as comp}
+            {@const compScale = comp.qty && comp.calculated?.totals?.total_weight ? comp.qty / comp.calculated.totals.total_weight : 1}
             <div>
               <div class="mb-3 flex items-center gap-2">
                 <a href="/recipes/{comp.companion_recipe_id}" class="text-sm font-semibold hover:underline">{comp.companion_name}</a>
                 <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
+                <span class="text-xs font-medium tabular-nums text-muted-foreground">{formatGrams(comp.qty || 0)}</span>
                 {#if comp.notes}
                   <span class="text-xs text-muted-foreground">{comp.notes}</span>
                 {/if}
@@ -541,7 +601,7 @@
                             <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">{ing.category}</Badge>
                           </td>
                           <td class="px-3 py-1.5 text-right tabular-nums">{(ing.overall_bakers_pct * 100).toFixed(1)}%</td>
-                          <td class="px-3 py-1.5 text-right tabular-nums">{formatGrams(ing.batch_qty)}</td>
+                          <td class="px-3 py-1.5 text-right tabular-nums">{formatGrams(ing.base_qty * compScale)}</td>
                         </tr>
                       {/each}
                     </tbody>
@@ -552,7 +612,7 @@
                           {(comp.calculated.ingredients.reduce((s, i) => s + (i.overall_bakers_pct || 0), 0) * 100).toFixed(1)}%
                         </td>
                         <td class="px-3 py-1.5 text-right tabular-nums">
-                          {formatGrams(comp.calculated.totals.total_weight)}
+                          {formatGrams(comp.qty || comp.calculated.totals.total_weight)}
                         </td>
                       </tr>
                     </tfoot>

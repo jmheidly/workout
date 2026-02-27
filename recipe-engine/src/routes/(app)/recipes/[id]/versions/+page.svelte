@@ -240,6 +240,21 @@
                   <span class="line-through text-red-600">{change.old}</span>
                   <span>→</span>
                   <span class="text-green-600">{change.new}</span>
+                {:else if change.type === 'companion_added'}
+                  <Badge class="text-xs bg-green-100 text-green-800">Companion added</Badge>
+                  <span>{change.name}</span>
+                  <Badge variant="secondary" class="text-[10px]">{change.role}</Badge>
+                {:else if change.type === 'companion_removed'}
+                  <Badge class="text-xs bg-red-100 text-red-800">Companion removed</Badge>
+                  <span class="line-through">{change.name}</span>
+                  <Badge variant="secondary" class="text-[10px]">{change.role}</Badge>
+                {:else if change.type === 'companion_modified'}
+                  <Badge variant="outline" class="text-xs">Companion</Badge>
+                  <span>{change.name}</span>
+                  <span class="text-muted-foreground">{change.field}:</span>
+                  <span class="line-through text-red-600">{change.old ?? '—'}</span>
+                  <span>→</span>
+                  <span class="text-green-600">{change.new ?? '—'}</span>
                 {/if}
               </div>
             {/each}
@@ -321,6 +336,35 @@
                 </div>
               {/each}
             </div>
+
+            <!-- Companions -->
+            {#if (side.snapshot.companions || []).length > 0}
+              <Separator class="my-2" />
+              <div class="space-y-1">
+                <p class="text-xs font-medium text-muted-foreground">Companions</p>
+                {#each side.snapshot.companions || [] as comp}
+                  {@const isCompChanged = changes?.some(
+                    (c) =>
+                      (c.companion_recipe_id === comp.companion_recipe_id &&
+                        (c.type === 'companion_modified' || c.type === 'companion_added'))
+                  )}
+                  {@const isCompRemoved = side === cmp.a && changes?.some(
+                    (c) => c.type === 'companion_removed' && c.companion_recipe_id === comp.companion_recipe_id
+                  )}
+                  <div
+                    class="flex items-center justify-between gap-2 rounded px-1.5 py-0.5 text-sm {isCompChanged
+                      ? 'bg-yellow-50'
+                      : ''} {isCompRemoved ? 'bg-red-50 line-through' : ''}"
+                  >
+                    <span>{comp.companion_name}</span>
+                    <div class="flex items-center gap-2">
+                      {#if comp.qty}<span class="text-xs tabular-nums text-muted-foreground">{comp.qty}g</span>{/if}
+                      <span class="text-xs text-muted-foreground">{comp.role}</span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </CardContent>
         </Card>
       {/each}

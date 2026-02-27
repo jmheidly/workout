@@ -179,6 +179,9 @@ function initSchema(db) {
     'ALTER TABLE ingredient_library ADD COLUMN bakery_id TEXT REFERENCES bakeries(id)',
     "ALTER TABLE recipes ADD COLUMN autolyse_overrides TEXT NOT NULL DEFAULT '{}'",
     'ALTER TABLE recipes ADD COLUMN dough_type TEXT',
+    "ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'",
+    'ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT REFERENCES recipe_ingredients(id) ON DELETE CASCADE',
+    'ALTER TABLE recipe_companions ADD COLUMN qty REAL NOT NULL DEFAULT 0',
   ]
   for (const sql of migrations) {
     try {
@@ -189,7 +192,9 @@ function initSchema(db) {
   }
 
   // Unique indexes
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL')
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL'
+  )
 
   // Bakery indexes
   db.exec(`
@@ -209,8 +214,12 @@ function initSchema(db) {
 
 /** @param {Database.Database} db */
 function migrateToMultiTenant(db) {
-  const bakeryCount = db.prepare('SELECT COUNT(*) as count FROM bakeries').get().count
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count
+  const bakeryCount = db
+    .prepare('SELECT COUNT(*) as count FROM bakeries')
+    .get().count
+  const userCount = db
+    .prepare('SELECT COUNT(*) as count FROM users')
+    .get().count
 
   // Only run if bakeries table is empty but users exist
   if (bakeryCount > 0 || userCount === 0) return
@@ -220,8 +229,13 @@ function migrateToMultiTenant(db) {
   const txn = db.transaction(() => {
     for (const user of users) {
       const bakeryId = generateId()
-      const name = user.name ? `${user.name}'s Bakery` : `${user.email.split('@')[0]}'s Bakery`
-      const slug = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      const name = user.name
+        ? `${user.name}'s Bakery`
+        : `${user.email.split('@')[0]}'s Bakery`
+      const slug = user.email
+        .split('@')[0]
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
 
       // Create bakery
       db.prepare(
@@ -234,22 +248,26 @@ function migrateToMultiTenant(db) {
       ).run(generateId(), bakeryId, user.id, 'owner')
 
       // Update all recipes for this user
-      db.prepare('UPDATE recipes SET bakery_id = ? WHERE user_id = ?').run(bakeryId, user.id)
+      db.prepare('UPDATE recipes SET bakery_id = ? WHERE user_id = ?').run(
+        bakeryId,
+        user.id
+      )
 
       // Update all mixer profiles for this user
-      db.prepare('UPDATE mixer_profiles SET bakery_id = ? WHERE user_id = ?').run(
-        bakeryId,
-        user.id
-      )
+      db.prepare(
+        'UPDATE mixer_profiles SET bakery_id = ? WHERE user_id = ?'
+      ).run(bakeryId, user.id)
 
       // Update all ingredient library entries for this user
-      db.prepare('UPDATE ingredient_library SET bakery_id = ? WHERE user_id = ?').run(
+      db.prepare(
+        'UPDATE ingredient_library SET bakery_id = ? WHERE user_id = ?'
+      ).run(bakeryId, user.id)
+
+      // Set active bakery
+      db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(
         bakeryId,
         user.id
       )
-
-      // Set active bakery
-      db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(bakeryId, user.id)
     }
 
     // Migrate ingredient_library UNIQUE constraint from (user_id, name) to (bakery_id, name)
@@ -292,12 +310,9 @@ function migrateToMultiTenant(db) {
 export function createUser(email, passwordHash, name) {
   const db = getDb()
   const id = generateId()
-  db.prepare('INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)').run(
-    id,
-    email,
-    passwordHash,
-    name || null
-  )
+  db.prepare(
+    'INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)'
+  ).run(id, email, passwordHash, name || null)
   return { id, email, name: name || null }
 }
 
@@ -308,7 +323,9 @@ export function createUser(email, passwordHash, name) {
 export function getUserByEmail(email) {
   const db = getDb()
   return db
-    .prepare('SELECT id, email, name, password_hash, google_id FROM users WHERE email = ?')
+    .prepare(
+      'SELECT id, email, name, password_hash, google_id FROM users WHERE email = ?'
+    )
     .get(email)
 }
 
@@ -318,7 +335,9 @@ export function getUserByEmail(email) {
  */
 export function getUserById(id) {
   const db = getDb()
-  return db.prepare('SELECT id, email, name, active_bakery_id FROM users WHERE id = ?').get(id)
+  return db
+    .prepare('SELECT id, email, name, active_bakery_id FROM users WHERE id = ?')
+    .get(id)
 }
 
 /**
@@ -341,12 +360,9 @@ export function getUserByGoogleId(googleId) {
 export function createGoogleUser(email, name, googleId) {
   const db = getDb()
   const id = generateId()
-  db.prepare('INSERT INTO users (id, email, name, google_id) VALUES (?, ?, ?, ?)').run(
-    id,
-    email,
-    name,
-    googleId
-  )
+  db.prepare(
+    'INSERT INTO users (id, email, name, google_id) VALUES (?, ?, ?, ?)'
+  ).run(id, email, name, googleId)
   return { id, email, name }
 }
 
@@ -380,11 +396,9 @@ export function updateUser(id, fields) {
  */
 export function createSession(id, userId, expiresAt) {
   const db = getDb()
-  db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').run(
-    id,
-    userId,
-    expiresAt
-  )
+  db.prepare(
+    'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)'
+  ).run(id, userId, expiresAt)
 }
 
 /**
@@ -393,7 +407,9 @@ export function createSession(id, userId, expiresAt) {
  */
 export function getSession(id) {
   const db = getDb()
-  return db.prepare('SELECT id, user_id, expires_at FROM sessions WHERE id = ?').get(id)
+  return db
+    .prepare('SELECT id, user_id, expires_at FROM sessions WHERE id = ?')
+    .get(id)
 }
 
 /** @param {string} id */
@@ -408,7 +424,10 @@ export function deleteSession(id) {
  */
 export function updateSessionExpiry(id, expiresAt) {
   const db = getDb()
-  db.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').run(expiresAt, id)
+  db.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').run(
+    expiresAt,
+    id
+  )
 }
 
 // ─── Recipes ─────────────────────────────────────────────────────────────────
@@ -460,8 +479,8 @@ export function createRecipe(userId, bakeryId, data) {
   const recipeId = generateId()
 
   const insertRecipe = db.prepare(`
-    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type, autolyse_overrides, dough_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO recipes (id, user_id, bakery_id, name, yield_per_piece, ddt, process_loss_pct, bake_loss_pct, autolyse, autolyse_duration_min, mixer_profile_id, mix_type, autolyse_overrides, dough_type, base_ingredient_category)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const insertIngredient = db.prepare(`
@@ -494,13 +513,21 @@ export function createRecipe(userId, bakeryId, data) {
       data.mixer_profile_id || null,
       data.mix_type || 'Improved Mix',
       JSON.stringify(data.autolyse_overrides || {}),
-      data.dough_type || null
+      data.dough_type || null,
+      data.base_ingredient_category || 'FLOUR'
     )
 
     if (data.ingredients) {
       for (const ing of data.ingredients) {
         const ingId = ing.id || generateId()
-        insertIngredient.run(ingId, recipeId, ing.name, ing.category, ing.base_qty, ing.sort_order)
+        insertIngredient.run(
+          ingId,
+          recipeId,
+          ing.name,
+          ing.category,
+          ing.base_qty,
+          ing.sort_order
+        )
 
         if (ing.category === 'PREFERMENT' && ing.preferment_settings) {
           insertPfSettings.run(
@@ -516,14 +543,16 @@ export function createRecipe(userId, bakeryId, data) {
       // Second pass: insert PF baker's pcts (need all ingredient IDs first)
       const allIngredients = data.ingredients.map((ing, idx) => ({
         ...ing,
-        _id: ing.id || data.ingredients[idx]._resolvedId
+        _id: ing.id || data.ingredients[idx]._resolvedId,
       }))
 
       // We need to re-fetch the inserted ingredients to get their IDs
       const dbIngredients = db
         .prepare('SELECT id, name FROM recipe_ingredients WHERE recipe_id = ?')
         .all(recipeId)
-      const nameToId = Object.fromEntries(dbIngredients.map((i) => [i.name, i.id]))
+      const nameToId = Object.fromEntries(
+        dbIngredients.map((i) => [i.name, i.id])
+      )
       const pfIngredients = dbIngredients.filter((i) => {
         const source = data.ingredients.find((si) => si.name === i.name)
         return source && source.category === 'PREFERMENT'
@@ -532,7 +561,9 @@ export function createRecipe(userId, bakeryId, data) {
       for (const ing of data.ingredients) {
         if (ing.preferment_bakers_pcts) {
           const ingId = nameToId[ing.name]
-          for (const [pfName, bp] of Object.entries(ing.preferment_bakers_pcts)) {
+          for (const [pfName, bp] of Object.entries(
+            ing.preferment_bakers_pcts
+          )) {
             const pfIngId = nameToId[pfName]
             if (pfIngId && bp !== undefined) {
               insertPfBp.run(ingId, pfIngId, bp)
@@ -545,8 +576,8 @@ export function createRecipe(userId, bakeryId, data) {
     // Insert process steps
     if (data.process_steps) {
       const insertStep = db.prepare(`
-        INSERT INTO process_steps (id, recipe_id, stage, sort_order, title, description, duration_min, temperature, mixer_speed, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO process_steps (id, recipe_id, stage, sort_order, title, description, duration_min, temperature, mixer_speed, notes, preferment_ingredient_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const step of data.process_steps) {
         insertStep.run(
@@ -559,7 +590,8 @@ export function createRecipe(userId, bakeryId, data) {
           step.duration_min ?? null,
           step.temperature ?? null,
           step.mixer_speed || null,
-          step.notes || null
+          step.notes || null,
+          step.preferment_ingredient_id || null
         )
       }
     }
@@ -579,12 +611,16 @@ export function getRecipe(id, bakeryId) {
   const db = getDb()
 
   const recipe = bakeryId
-    ? db.prepare('SELECT * FROM recipes WHERE id = ? AND bakery_id = ?').get(id, bakeryId)
+    ? db
+        .prepare('SELECT * FROM recipes WHERE id = ? AND bakery_id = ?')
+        .get(id, bakeryId)
     : db.prepare('SELECT * FROM recipes WHERE id = ?').get(id)
   if (!recipe) return null
 
   const ingredients = db
-    .prepare('SELECT * FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order')
+    .prepare(
+      'SELECT * FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order'
+    )
     .all(id)
 
   const pfSettings = db
@@ -604,7 +640,9 @@ export function getRecipe(id, bakeryId) {
     .all(id)
 
   // Assemble
-  const pfSettingsMap = Object.fromEntries(pfSettings.map((s) => [s.ingredient_id, s]))
+  const pfSettingsMap = Object.fromEntries(
+    pfSettings.map((s) => [s.ingredient_id, s])
+  )
   const pfBpMap = {}
   for (const bp of pfBps) {
     if (!pfBpMap[bp.ingredient_id]) pfBpMap[bp.ingredient_id] = {}
@@ -612,7 +650,9 @@ export function getRecipe(id, bakeryId) {
   }
 
   const processSteps = db
-    .prepare('SELECT * FROM process_steps WHERE recipe_id = ? ORDER BY sort_order')
+    .prepare(
+      'SELECT * FROM process_steps WHERE recipe_id = ? ORDER BY sort_order'
+    )
     .all(id)
 
   const companions = db
@@ -631,10 +671,10 @@ export function getRecipe(id, bakeryId) {
     ingredients: ingredients.map((ing) => ({
       ...ing,
       preferment_bakers_pcts: pfBpMap[ing.id] || {},
-      preferment_settings: pfSettingsMap[ing.id] || null
+      preferment_settings: pfSettingsMap[ing.id] || null,
     })),
     process_steps: processSteps,
-    companions
+    companions,
   }
 
   return assembled
@@ -680,6 +720,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
       `UPDATE recipes SET name = ?, yield_per_piece = ?, ddt = ?,
        process_loss_pct = ?, bake_loss_pct = ?, autolyse = ?, autolyse_duration_min = ?,
        mixer_profile_id = ?, mix_type = ?, autolyse_overrides = ?, dough_type = ?,
+       base_ingredient_category = ?,
        version = version + 1, updated_at = datetime('now')
        WHERE id = ? AND bakery_id = ?`
     ).run(
@@ -694,6 +735,7 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
       data.mix_type || 'Improved Mix',
       JSON.stringify(data.autolyse_overrides || {}),
       data.dough_type || null,
+      data.base_ingredient_category || 'FLOUR',
       id,
       bakeryId
     )
@@ -719,7 +761,14 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
       for (const ing of data.ingredients) {
         const ingId = ing.id || generateId()
         ing._resolvedId = ingId
-        insertIngredient.run(ingId, id, ing.name, ing.category, ing.base_qty, ing.sort_order)
+        insertIngredient.run(
+          ingId,
+          id,
+          ing.name,
+          ing.category,
+          ing.base_qty,
+          ing.sort_order
+        )
 
         if (ing.category === 'PREFERMENT' && ing.preferment_settings) {
           insertPfSettings.run(
@@ -734,13 +783,18 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
 
       // Second pass: insert PF baker's pcts
       const idLookup = Object.fromEntries(
-        data.ingredients.map((ing) => [ing.id || ing._resolvedId, ing.id || ing._resolvedId])
+        data.ingredients.map((ing) => [
+          ing.id || ing._resolvedId,
+          ing.id || ing._resolvedId,
+        ])
       )
 
       for (const ing of data.ingredients) {
         if (ing.preferment_bakers_pcts) {
           const ingId = ing.id || ing._resolvedId
-          for (const [pfIngId, bp] of Object.entries(ing.preferment_bakers_pcts)) {
+          for (const [pfIngId, bp] of Object.entries(
+            ing.preferment_bakers_pcts
+          )) {
             if (bp !== undefined && bp !== null) {
               insertPfBp.run(ingId, pfIngId, bp)
             }
@@ -753,8 +807,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
     db.prepare('DELETE FROM process_steps WHERE recipe_id = ?').run(id)
     if (data.process_steps) {
       const insertStep = db.prepare(`
-        INSERT INTO process_steps (id, recipe_id, stage, sort_order, title, description, duration_min, temperature, mixer_speed, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO process_steps (id, recipe_id, stage, sort_order, title, description, duration_min, temperature, mixer_speed, notes, preferment_ingredient_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const step of data.process_steps) {
         insertStep.run(
@@ -767,7 +821,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
           step.duration_min ?? null,
           step.temperature ?? null,
           step.mixer_speed || null,
-          step.notes || null
+          step.notes || null,
+          step.preferment_ingredient_id || null
         )
       }
     }
@@ -776,8 +831,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
     db.prepare('DELETE FROM recipe_companions WHERE recipe_id = ?').run(id)
     if (data.companions?.length) {
       const insertComp = db.prepare(
-        `INSERT INTO recipe_companions (id, recipe_id, companion_recipe_id, role, sort_order, notes)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO recipe_companions (id, recipe_id, companion_recipe_id, role, sort_order, notes, qty)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       for (const [idx, c] of data.companions.entries()) {
         // Defense in depth: prevent self-link
@@ -793,7 +848,8 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
           c.companion_recipe_id,
           c.role || 'other',
           idx,
-          c.notes || null
+          c.notes || null,
+          c.qty || 0
         )
       }
     }
@@ -808,7 +864,10 @@ export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
  */
 export function deleteRecipe(id, bakeryId) {
   const db = getDb()
-  db.prepare('DELETE FROM recipes WHERE id = ? AND bakery_id = ?').run(id, bakeryId)
+  db.prepare('DELETE FROM recipes WHERE id = ? AND bakery_id = ?').run(
+    id,
+    bakeryId
+  )
 }
 
 // ─── Recipe Versioning ───────────────────────────────────────────────────────
@@ -825,6 +884,7 @@ export function buildRecipeSnapshot(recipe) {
     yield_per_piece: recipe.yield_per_piece,
     ddt: recipe.ddt,
     dough_type: recipe.dough_type ?? null,
+    base_ingredient_category: recipe.base_ingredient_category || 'FLOUR',
     autolyse: recipe.autolyse,
     autolyse_duration_min: recipe.autolyse_duration_min,
     autolyse_overrides: recipe.autolyse_overrides || {},
@@ -851,6 +911,7 @@ export function buildRecipeSnapshot(recipe) {
       temperature: s.temperature,
       mixer_speed: s.mixer_speed,
       notes: s.notes,
+      preferment_ingredient_id: s.preferment_ingredient_id || null,
     })),
     companions: (recipe.companions || []).map((c) => ({
       companion_recipe_id: c.companion_recipe_id,
@@ -858,6 +919,7 @@ export function buildRecipeSnapshot(recipe) {
       role: c.role,
       sort_order: c.sort_order,
       notes: c.notes,
+      qty: c.qty || 0,
     })),
   }
 }
@@ -879,14 +941,23 @@ export function snapshotBeforeUpdate(recipeId, userId, changeNotes) {
 
   // Check if this version is already snapshotted (idempotency)
   const existing = db
-    .prepare('SELECT id FROM recipe_versions WHERE recipe_id = ? AND version_number = ?')
+    .prepare(
+      'SELECT id FROM recipe_versions WHERE recipe_id = ? AND version_number = ?'
+    )
     .get(recipeId, currentVersion)
   if (existing) return
 
   db.prepare(
     `INSERT INTO recipe_versions (id, recipe_id, version_number, snapshot, change_notes, created_by)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(generateId(), recipeId, currentVersion, snapshot, changeNotes || null, userId)
+  ).run(
+    generateId(),
+    recipeId,
+    currentVersion,
+    snapshot,
+    changeNotes || null,
+    userId
+  )
 }
 
 /**
@@ -917,7 +988,9 @@ export function getRecipeVersions(recipeId, { limit, offset } = {}) {
 export function getRecipeVersionCount(recipeId) {
   const db = getDb()
   return db
-    .prepare('SELECT COUNT(*) as count FROM recipe_versions WHERE recipe_id = ?')
+    .prepare(
+      'SELECT COUNT(*) as count FROM recipe_versions WHERE recipe_id = ?'
+    )
     .get(recipeId).count
 }
 
@@ -930,7 +1003,9 @@ export function getRecipeVersionCount(recipeId) {
 export function getRecipeVersion(recipeId, versionNumber) {
   const db = getDb()
   return db
-    .prepare('SELECT * FROM recipe_versions WHERE recipe_id = ? AND version_number = ?')
+    .prepare(
+      'SELECT * FROM recipe_versions WHERE recipe_id = ? AND version_number = ?'
+    )
     .get(recipeId, versionNumber)
 }
 
@@ -972,11 +1047,15 @@ export function getMixerProfiles(bakeryId) {
  */
 export function getMixerProfile(id) {
   const db = getDb()
-  const profile = db.prepare('SELECT * FROM mixer_profiles WHERE id = ?').get(id)
+  const profile = db
+    .prepare('SELECT * FROM mixer_profiles WHERE id = ?')
+    .get(id)
   if (!profile) return null
 
   const calibrations = db
-    .prepare('SELECT mix_type, first_speed_rounds FROM mixer_calibrations WHERE mixer_id = ?')
+    .prepare(
+      'SELECT mix_type, first_speed_rounds FROM mixer_calibrations WHERE mixer_id = ?'
+    )
     .all(id)
 
   return { ...profile, calibrations }
@@ -996,7 +1075,16 @@ export function createMixerProfile(userId, bakeryId, data) {
     db.prepare(
       `INSERT INTO mixer_profiles (id, user_id, bakery_id, name, type, friction_factor, first_speed_rpm, second_speed_rpm)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, userId, bakeryId, data.name, data.type, data.friction_factor, data.first_speed_rpm, data.second_speed_rpm)
+    ).run(
+      id,
+      userId,
+      bakeryId,
+      data.name,
+      data.type,
+      data.friction_factor,
+      data.first_speed_rpm,
+      data.second_speed_rpm
+    )
 
     if (data.calibrations) {
       const insertCal = db.prepare(
@@ -1026,7 +1114,15 @@ export function updateMixerProfile(id, bakeryId, data) {
       `UPDATE mixer_profiles SET name = ?, type = ?, friction_factor = ?,
        first_speed_rpm = ?, second_speed_rpm = ?
        WHERE id = ? AND bakery_id = ?`
-    ).run(data.name, data.type, data.friction_factor, data.first_speed_rpm, data.second_speed_rpm, id, bakeryId)
+    ).run(
+      data.name,
+      data.type,
+      data.friction_factor,
+      data.first_speed_rpm,
+      data.second_speed_rpm,
+      id,
+      bakeryId
+    )
 
     db.prepare('DELETE FROM mixer_calibrations WHERE mixer_id = ?').run(id)
     if (data.calibrations) {
@@ -1049,7 +1145,10 @@ export function updateMixerProfile(id, bakeryId, data) {
  */
 export function deleteMixerProfile(id, bakeryId) {
   const db = getDb()
-  db.prepare('DELETE FROM mixer_profiles WHERE id = ? AND bakery_id = ?').run(id, bakeryId)
+  db.prepare('DELETE FROM mixer_profiles WHERE id = ? AND bakery_id = ?').run(
+    id,
+    bakeryId
+  )
 }
 
 // ─── Ingredient Library ──────────────────────────────────────────────────────
@@ -1061,7 +1160,9 @@ export function deleteMixerProfile(id, bakeryId) {
 export function getIngredientLibrary(bakeryId) {
   const db = getDb()
   return db
-    .prepare('SELECT id, name, category FROM ingredient_library WHERE bakery_id = ? ORDER BY name')
+    .prepare(
+      'SELECT id, name, category FROM ingredient_library WHERE bakery_id = ? ORDER BY name'
+    )
     .all(bakeryId)
 }
 
@@ -1089,12 +1190,9 @@ export function createIngredientLibraryEntry(userId, bakeryId, name, category) {
  */
 export function updateIngredientLibraryEntry(id, bakeryId, name, category) {
   const db = getDb()
-  db.prepare('UPDATE ingredient_library SET name = ?, category = ? WHERE id = ? AND bakery_id = ?').run(
-    name,
-    category,
-    id,
-    bakeryId
-  )
+  db.prepare(
+    'UPDATE ingredient_library SET name = ?, category = ? WHERE id = ? AND bakery_id = ?'
+  ).run(name, category, id, bakeryId)
 }
 
 /**
@@ -1103,7 +1201,9 @@ export function updateIngredientLibraryEntry(id, bakeryId, name, category) {
  */
 export function deleteIngredientLibraryEntry(id, bakeryId) {
   const db = getDb()
-  db.prepare('DELETE FROM ingredient_library WHERE id = ? AND bakery_id = ?').run(id, bakeryId)
+  db.prepare(
+    'DELETE FROM ingredient_library WHERE id = ? AND bakery_id = ?'
+  ).run(id, bakeryId)
 }
 
 /**
@@ -1124,7 +1224,8 @@ export function syncIngredientLibrary(userId, bakeryId, ingredients) {
 
   const txn = db.transaction(() => {
     for (const ing of ingredients) {
-      if (!ing.name || !ing.name.trim() || ing.category === 'PREFERMENT') continue
+      if (!ing.name || !ing.name.trim() || ing.category === 'PREFERMENT')
+        continue
       upsert.run(generateId(), userId, bakeryId, ing.name.trim(), ing.category)
     }
   })
@@ -1143,12 +1244,9 @@ export function syncIngredientLibrary(userId, bakeryId, ingredients) {
 export function createBakery(name, slug, createdBy) {
   const db = getDb()
   const id = generateId()
-  db.prepare('INSERT INTO bakeries (id, name, slug, created_by) VALUES (?, ?, ?, ?)').run(
-    id,
-    name,
-    slug,
-    createdBy
-  )
+  db.prepare(
+    'INSERT INTO bakeries (id, name, slug, created_by) VALUES (?, ?, ?, ?)'
+  ).run(id, name, slug, createdBy)
   return { id, name, slug, created_by: createdBy }
 }
 
@@ -1182,7 +1280,9 @@ export function updateBakery(id, fields) {
   }
   if (sets.length === 0) return
   values.push(id)
-  db.prepare(`UPDATE bakeries SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  db.prepare(`UPDATE bakeries SET ${sets.join(', ')} WHERE id = ?`).run(
+    ...values
+  )
 }
 
 /** @param {string} id */
@@ -1194,7 +1294,9 @@ export function deleteBakery(id) {
     db.prepare('DELETE FROM mixer_profiles WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM ingredient_library WHERE bakery_id = ?').run(id)
     // Clear active_bakery_id for any user pointing to this bakery
-    db.prepare('UPDATE users SET active_bakery_id = NULL WHERE active_bakery_id = ?').run(id)
+    db.prepare(
+      'UPDATE users SET active_bakery_id = NULL WHERE active_bakery_id = ?'
+    ).run(id)
     // bakery_members and invitations CASCADE from bakeries FK
     db.prepare('DELETE FROM bakeries WHERE id = ?').run(id)
   })
@@ -1254,11 +1356,9 @@ export function addBakeryMember(bakeryId, userId, role) {
  */
 export function updateBakeryMemberRole(bakeryId, userId, role) {
   const db = getDb()
-  db.prepare('UPDATE bakery_members SET role = ? WHERE bakery_id = ? AND user_id = ?').run(
-    role,
-    bakeryId,
-    userId
-  )
+  db.prepare(
+    'UPDATE bakery_members SET role = ? WHERE bakery_id = ? AND user_id = ?'
+  ).run(role, bakeryId, userId)
 }
 
 /**
@@ -1268,15 +1368,13 @@ export function updateBakeryMemberRole(bakeryId, userId, role) {
 export function removeBakeryMember(bakeryId, userId) {
   const db = getDb()
   const txn = db.transaction(() => {
-    db.prepare('DELETE FROM bakery_members WHERE bakery_id = ? AND user_id = ?').run(
-      bakeryId,
-      userId
-    )
+    db.prepare(
+      'DELETE FROM bakery_members WHERE bakery_id = ? AND user_id = ?'
+    ).run(bakeryId, userId)
     // Clear active_bakery_id if it points to the bakery they were removed from
-    db.prepare('UPDATE users SET active_bakery_id = NULL WHERE id = ? AND active_bakery_id = ?').run(
-      userId,
-      bakeryId
-    )
+    db.prepare(
+      'UPDATE users SET active_bakery_id = NULL WHERE id = ? AND active_bakery_id = ?'
+    ).run(userId, bakeryId)
   })
   txn()
 }
@@ -1299,7 +1397,10 @@ export function getBakeryMember(bakeryId, userId) {
  */
 export function setActiveBakery(userId, bakeryId) {
   const db = getDb()
-  db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(bakeryId, userId)
+  db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(
+    bakeryId,
+    userId
+  )
 }
 
 // ─── Invitations ──────────────────────────────────────────────────────────────
@@ -1312,7 +1413,14 @@ export function setActiveBakery(userId, bakeryId) {
  * @param {string} token
  * @param {string} expiresAt
  */
-export function createInvitation(bakeryId, email, role, invitedBy, token, expiresAt) {
+export function createInvitation(
+  bakeryId,
+  email,
+  role,
+  invitedBy,
+  token,
+  expiresAt
+) {
   const db = getDb()
   const id = generateId()
   db.prepare(
@@ -1331,7 +1439,9 @@ export function getInvitationByToken(token) {
 export function getInvitationsByBakery(bakeryId) {
   const db = getDb()
   return db
-    .prepare('SELECT * FROM invitations WHERE bakery_id = ? AND accepted_at IS NULL ORDER BY expires_at DESC')
+    .prepare(
+      'SELECT * FROM invitations WHERE bakery_id = ? AND accepted_at IS NULL ORDER BY expires_at DESC'
+    )
     .all(bakeryId)
 }
 
@@ -1339,14 +1449,18 @@ export function getInvitationsByBakery(bakeryId) {
 export function getInvitationsByEmail(email) {
   const db = getDb()
   return db
-    .prepare('SELECT * FROM invitations WHERE email = ? AND accepted_at IS NULL ORDER BY expires_at DESC')
+    .prepare(
+      'SELECT * FROM invitations WHERE email = ? AND accepted_at IS NULL ORDER BY expires_at DESC'
+    )
     .all(email)
 }
 
 /** @param {string} id */
 export function acceptInvitation(id) {
   const db = getDb()
-  db.prepare("UPDATE invitations SET accepted_at = datetime('now') WHERE id = ?").run(id)
+  db.prepare(
+    "UPDATE invitations SET accepted_at = datetime('now') WHERE id = ?"
+  ).run(id)
 }
 
 /** @param {string} id */

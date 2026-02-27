@@ -16,6 +16,8 @@
 12. [Recipe Versioning](#12-recipe-versioning)
 13. [Complete Formula Reference](#13-complete-formula-reference)
 14. [Seed Recipes](#14-seed-recipes)
+15. [Dough Type System](#15-dough-type-system)
+16. [Accompanied Recipes](#16-accompanied-recipes)
 
 ---
 
@@ -30,7 +32,7 @@ This is the **universal foundation** for a recipe management engine. It handles 
 3. **Dynamic ingredient list.** No fixed row count. A recipe has as many ingredients as the baker adds — 4 for a lean dough, 25 for an enriched holiday bread.
 4. **Dynamic pre-ferment count.** A recipe can have 0 to N pre-ferments. Each is just a PREFERMENT-category ingredient row — adding the row triggers the pre-ferment engine automatically.
 5. **Category drives formula behavior.** Each ingredient is tagged with a category (FLOUR, LIQUID, ENRICHMENT, etc.) and the calculation engine uses the category to determine which formula variant to apply.
-6. **Hydration = water only** (per *Advanced Bread and Pastry*).
+6. **Hydration = water only** (per _Advanced Bread and Pastry_).
 7. **Baker's percentage = relative to total flour weight** (sum of all FLOUR-category ingredients).
 8. **All units are grams and °C.**
 9. **Zero-safe.** Every formula gracefully handles zero-quantity ingredients and disabled pre-ferments with no division-by-zero errors.
@@ -38,20 +40,20 @@ This is the **universal foundation** for a recipe management engine. It handles 
 
 ### What This Spec Covers
 
-| Capability | Section |
-|-----------|---------|
-| Building any recipe from ingredients + quantities | §2 |
-| Calculating all dough stages from Baker's % | §4 |
-| Any number of pre-ferments with self-reference decomposition | §5 |
-| Pre-ferment calculation ordering | §5.4 |
-| Production scaling (by pieces, dough weight, flour weight) | §4.12 |
-| Water temperature targeting | §6 |
-| Mixer friction compensation | §7 |
-| Autolyse split-mix handling | §8 |
-| Production scheduling (forward + reverse) | §9 |
-| Step-by-step process method | §10 |
-| Loss/waste scaling | §11 |
-| Version history with UUID-based diff and rename detection | §12 |
+| Capability                                                   | Section |
+| ------------------------------------------------------------ | ------- |
+| Building any recipe from ingredients + quantities            | §2      |
+| Calculating all dough stages from Baker's %                  | §4      |
+| Any number of pre-ferments with self-reference decomposition | §5      |
+| Pre-ferment calculation ordering                             | §5.4    |
+| Production scaling (by pieces, dough weight, flour weight)   | §4.12   |
+| Water temperature targeting                                  | §6      |
+| Mixer friction compensation                                  | §7      |
+| Autolyse split-mix handling                                  | §8      |
+| Production scheduling (forward + reverse)                    | §9      |
+| Step-by-step process method                                  | §10     |
+| Loss/waste scaling                                           | §11     |
+| Version history with UUID-based diff and rename detection    | §12     |
 
 ---
 
@@ -63,10 +65,10 @@ This section defines the baker's mental model and how the app should present the
 
 Every item in a recipe — flour, water, butter, levain, poolish — is added the same way:
 
-| Column | What the baker enters | Example |
-|--------|----------------------|---------|
-| **J** | Ingredient name | "Bread flour", "Water", "Poolish" |
-| **K** | Quantity in grams | 234, 322, 100 |
+| Column | What the baker enters | Example                           |
+| ------ | --------------------- | --------------------------------- |
+| **J**  | Ingredient name       | "Bread flour", "Water", "Poolish" |
+| **K**  | Quantity in grams     | 234, 322, 100                     |
 
 The baker also assigns a **category** to each row. The category determines how the engine treats the ingredient.
 
@@ -178,20 +180,20 @@ Result:  → K value remains (400g)
 
 For a recipe with N ingredients (including P pre-ferment rows), the logical columns are:
 
-| Column | Content | Type |
-|--------|---------|------|
-| **J** | Ingredient name | INPUT |
-| **K** | Quantity (g) | INPUT |
-| **Category** | FLOUR / LIQUID / PREFERMENT / etc. | INPUT (set once) |
-| **D** | Overall Baker's % | CALCULATED: `TFQ[i] / SUM(TFQ_flours)` |
-| For each PREFERMENT row p: | | |
-| **BP_p** | Baker's % within pre-ferment p | INPUT (per ingredient) |
-| **QTY_p** | Quantity within pre-ferment p | CALCULATED |
-| **C** | Total formula quantity | CALCULATED |
-| **F** | Final dough Baker's % | CALCULATED |
-| **G** | Final dough quantity | CALCULATED |
-| **H** | Per-item weight | CALCULATED |
-| **I** | Batch quantity | CALCULATED |
+| Column                     | Content                            | Type                                   |
+| -------------------------- | ---------------------------------- | -------------------------------------- |
+| **J**                      | Ingredient name                    | INPUT                                  |
+| **K**                      | Quantity (g)                       | INPUT                                  |
+| **Category**               | FLOUR / LIQUID / PREFERMENT / etc. | INPUT (set once)                       |
+| **D**                      | Overall Baker's %                  | CALCULATED: `TFQ[i] / SUM(TFQ_flours)` |
+| For each PREFERMENT row p: |                                    |                                        |
+| **BP_p**                   | Baker's % within pre-ferment p     | INPUT (per ingredient)                 |
+| **QTY_p**                  | Quantity within pre-ferment p      | CALCULATED                             |
+| **C**                      | Total formula quantity             | CALCULATED                             |
+| **F**                      | Final dough Baker's %              | CALCULATED                             |
+| **G**                      | Final dough quantity               | CALCULATED                             |
+| **H**                      | Per-item weight                    | CALCULATED                             |
+| **I**                      | Batch quantity                     | CALCULATED                             |
 
 The number of BP/QTY column pairs grows dynamically with each PREFERMENT row added.
 
@@ -353,12 +355,12 @@ MixerCalibration {
 
 ### 3.6.2 MixType (System Constants)
 
-| Mix Type | Target Rounds | Friction Mult | Has 2nd Speed |
-|----------|--------------|---------------|---------------|
-| Short Mix | 600 | 0.7× | No |
-| Improved Mix | 1000 | 1.0× | Yes |
-| Intensive Mix | 1600 | 1.3× | Yes |
-| Short Improved | 400 | 0.5× | Yes |
+| Mix Type       | Target Rounds | Friction Mult | Has 2nd Speed |
+| -------------- | ------------- | ------------- | ------------- |
+| Short Mix      | 600           | 0.7×          | No            |
+| Improved Mix   | 1000          | 1.0×          | Yes           |
+| Intensive Mix  | 1600          | 1.3×          | Yes           |
+| Short Improved | 400           | 0.5×          | Yes           |
 
 ### 3.7 FermentationStage
 
@@ -581,6 +583,7 @@ def calc_final_dough_qty(ingredient, all_ingredients, all_preferments):
 **Important note on the rebalancing formulas:**
 
 The original sheet had complex formulas in Column G that added and subtracted Poolish contributions. For most ingredients, these terms algebraically cancel to zero, leaving `G[i] = K[i]`. The complexity only matters when:
+
 - Multiple pre-ferments are active simultaneously
 - An ingredient appears in BOTH the base recipe (K) AND a pre-ferment's Baker's %
 
@@ -840,6 +843,7 @@ ingredient_qty = (ratio × flour_total / pf_total_bakers_pct) × ingredient_bake
 ```
 
 Where:
+
 - `ratio = pf_base_qty / flour_total`
 - `flour_total = sum of all FLOUR base quantities`
 - `pf_total_bakers_pct = sum of all Baker's % within this pre-ferment`
@@ -859,6 +863,7 @@ def toggle_preferment(recipe, ingredient_id, enabled):
 ```
 
 Rules:
+
 - Disabled: ratio = 0, all quantities = 0, but row stays visible
 - All Baker's % inputs preserved when disabled (not cleared)
 - K value preserved when disabled
@@ -869,13 +874,13 @@ Rules:
 
 When the baker creates a new pre-ferment, suggest defaults based on type:
 
-| Type | Default Flour BP | Default Water BP | Default Yeast BP | Notes |
-|------|-----------------|-----------------|-----------------|-------|
-| POOLISH | 1.0 | 1.0 | 0.001 | 100% hydration |
-| BIGA | 1.0 | 0.5–0.6 | 0.001 | Stiff Italian |
-| LEVAIN | 1.0 | 0.5–1.0 | — | Sourdough, no yeast |
-| PATE_FERMENTEE | 1.0 | 0.6 | 0.001 | Mimics the main dough |
-| SPONGE | 1.0 | 0.6 | 0.01 | Enriched, more yeast |
+| Type           | Default Flour BP | Default Water BP | Default Yeast BP | Notes                 |
+| -------------- | ---------------- | ---------------- | ---------------- | --------------------- |
+| POOLISH        | 1.0              | 1.0              | 0.001            | 100% hydration        |
+| BIGA           | 1.0              | 0.5–0.6          | 0.001            | Stiff Italian         |
+| LEVAIN         | 1.0              | 0.5–1.0          | —                | Sourdough, no yeast   |
+| PATE_FERMENTEE | 1.0              | 0.6              | 0.001            | Mimics the main dough |
+| SPONGE         | 1.0              | 0.6              | 0.01             | Enriched, more yeast  |
 
 These are suggestions only — the baker can change any value.
 
@@ -923,28 +928,30 @@ def recalculate_all(recipe):
 
 Each pre-ferment can have its own **DDT** and **fermentation duration**, stored in `preferment_settings`:
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `ddt` | `REAL \| null` | `null` (inherit recipe DDT) | Target dough temperature for this PF build |
-| `fermentation_duration_min` | `INTEGER \| null` | `null` (use type default) | How long this PF ferments before the main mix |
+| Field                       | Type              | Default                     | Description                                   |
+| --------------------------- | ----------------- | --------------------------- | --------------------------------------------- |
+| `ddt`                       | `REAL \| null`    | `null` (inherit recipe DDT) | Target dough temperature for this PF build    |
+| `fermentation_duration_min` | `INTEGER \| null` | `null` (use type default)   | How long this PF ferments before the main mix |
 
 **Fermentation duration defaults by type:**
 
-| Type | Default Duration |
-|------|-----------------|
-| POOLISH | 12h (720 min) |
-| BIGA | 16h (960 min) |
-| LEVAIN | 8h (480 min) |
-| PATE_FERMENTEE | 12h (720 min) |
-| SPONGE | 4h (240 min) |
-| CUSTOM | 8h (480 min) |
+| Type           | Default Duration |
+| -------------- | ---------------- |
+| POOLISH        | 12h (720 min)    |
+| BIGA           | 16h (960 min)    |
+| LEVAIN         | 8h (480 min)     |
+| PATE_FERMENTEE | 12h (720 min)    |
+| SPONGE         | 4h (240 min)     |
+| CUSTOM         | 8h (480 min)     |
 
 **Inheritance rules:**
+
 - `ddt = null` → uses the recipe-level DDT
 - `fermentation_duration_min = null` → uses the type default from the table above
 - Explicit values override the defaults
 
 **Production page usage:** The production page uses these values to compute:
+
 1. **Water temperature** for each PF (2-factor: `water = DDT × 2 − flour_temp − room_temp`, since PFs are hand-mixed with no friction)
 2. **Start time** = `target_mix_time − fermentation_duration`
 
@@ -1009,24 +1016,24 @@ def calc_water_temp_with_autolyse(ddt, room_temp, flour_temp, friction_factor, a
 
 ### 7.1 Friction Factor Defaults by Mixer Type
 
-| Mixer Type | Friction (°C) | 1st RPM | 2nd RPM | Notes |
-|-----------|--------------|---------|---------|-------|
-| SPIRAL | 14 | 105 | 204 | Most common bakery mixer |
-| OBLIQUE | 8 | 40 | 80 | Gentle action, long mix times |
-| PLANETARY | 8 | 80 | 160 | Varies widely by model/size (see note) |
-| FORK | 5 | 40 | 80 | Low-speed, gentle |
-| HAND | 2 | 0 | 0 | No timer computation |
+| Mixer Type | Friction (°C) | 1st RPM | 2nd RPM | Notes                                  |
+| ---------- | ------------- | ------- | ------- | -------------------------------------- |
+| SPIRAL     | 14            | 105     | 204     | Most common bakery mixer               |
+| OBLIQUE    | 8             | 40      | 80      | Gentle action, long mix times          |
+| PLANETARY  | 8             | 80      | 160     | Varies widely by model/size (see note) |
+| FORK       | 5             | 40      | 80      | Low-speed, gentle                      |
+| HAND       | 2             | 0       | 0       | No timer computation                   |
 
 **Note on planetary mixers:** RPMs vary significantly by model and bowl size. A 20-qt Hobart runs ~107/198 RPM while a 60-qt runs ~70/124 RPM. The defaults above are mid-range starting points — bakers should check their mixer's technical manual and enter actual RPMs.
 
 ### 7.2 Mix Types, Target Rounds & Friction Multipliers
 
-| Mix Type | Target Rounds (2nd) | Friction Mult | Has 2nd Speed |
-|----------|--------------------|---------------|---------------|
-| Short Mix | 600 | 0.7× | No — 1st speed only |
-| Improved Mix | 1000 | 1.0× | Yes |
-| Intensive Mix | 1600 | 1.3× | Yes |
-| Short Improved | 400 | 0.5× | Yes |
+| Mix Type       | Target Rounds (2nd) | Friction Mult | Has 2nd Speed       |
+| -------------- | ------------------- | ------------- | ------------------- |
+| Short Mix      | 600                 | 0.7×          | No — 1st speed only |
+| Improved Mix   | 1000                | 1.0×          | Yes                 |
+| Intensive Mix  | 1600                | 1.3×          | Yes                 |
+| Short Improved | 400                 | 0.5×          | Yes                 |
 
 ```javascript
 effective_friction = friction_factor × friction_mult
@@ -1036,19 +1043,20 @@ effective_friction = friction_factor × friction_mult
 
 Each mix type produces different bread characteristics due to the interplay between gluten development, oxidation, and fermentation time. This table summarizes the textbook guidelines for a standard lean dough:
 
-| Characteristic | Short Mix | Improved Mix | Intensive Mix |
-|---------------|-----------|-------------|--------------|
-| Gluten development | Underdeveloped | Partial | Full |
-| Typical hydration | 70% | 67% | 65% |
-| Typical yeast (fresh) | 0.5% | 1.5% | 2.0% |
-| 1st fermentation | 3.5 hours | 1.5 hours | 20 minutes |
-| Folds during bulk | 3 | 0–1 | 0 |
-| Final proof | 45–60 min | 60–90 min | 90–120 min |
-| Crumb color | Cream (carotenoids preserved) | Light cream | White (oxidized) |
-| Flavor | Complex (long fermentation) | Good | Mild (limited fermentation) |
-| Shelf life | Best (acidity development) | Good | Shortest |
+| Characteristic        | Short Mix                     | Improved Mix | Intensive Mix               |
+| --------------------- | ----------------------------- | ------------ | --------------------------- |
+| Gluten development    | Underdeveloped                | Partial      | Full                        |
+| Typical hydration     | 70%                           | 67%          | 65%                         |
+| Typical yeast (fresh) | 0.5%                          | 1.5%         | 2.0%                        |
+| 1st fermentation      | 3.5 hours                     | 1.5 hours    | 20 minutes                  |
+| Folds during bulk     | 3                             | 0–1          | 0                           |
+| Final proof           | 45–60 min                     | 60–90 min    | 90–120 min                  |
+| Crumb color           | Cream (carotenoids preserved) | Light cream  | White (oxidized)            |
+| Flavor                | Complex (long fermentation)   | Good         | Mild (limited fermentation) |
+| Shelf life            | Best (acidity development)    | Good         | Shortest                    |
 
 Notes:
+
 - Higher hydration in Short/Improved compensates for the extensibility needed during folds.
 - Lower yeast in Short Mix prevents over-fermentation during the long bulk.
 - Water temperature decreases from Short → Intensive to compensate for increasing mixing friction.
@@ -1059,12 +1067,14 @@ Notes:
 Each mixer profile stores calibrated **1st-speed rounds** per mix type. The engine computes durations:
 
 **For Improved Mix, Intensive Mix, Short Improved:**
+
 ```
 1st_speed_min = calibration[mix_type].first_speed_rounds / first_speed_rpm
 2nd_speed_min = MIX_TYPES[mix_type].target_rounds / second_speed_rpm
 ```
 
 **For Short Mix (1st speed only):**
+
 ```
 1st_speed_min = (calibration['Improved Mix'].first_speed_rounds + 600) / first_speed_rpm
 2nd_speed_min = 0
@@ -1072,12 +1082,12 @@ Each mixer profile stores calibrated **1st-speed rounds** per mix type. The engi
 
 **Verification table (Caplain: rpm1=105, rpm2=204):**
 
-| Mix Type | 1st Rounds | 1st Min | 2nd Rounds | 2nd Min | Total |
-|----------|-----------|---------|-----------|---------|-------|
-| Short Mix | 420+600=1020 | 9.7 | 0 | 0.0 | 9.7 |
-| Improved Mix | 420 | 4.0 | 1000 | 4.9 | 8.9 |
-| Intensive Mix | 525 | 5.0 | 1600 | 7.8 | 12.8 |
-| Short Improved | 525 | 5.0 | 400 | 2.0 | 7.0 |
+| Mix Type       | 1st Rounds   | 1st Min | 2nd Rounds | 2nd Min | Total |
+| -------------- | ------------ | ------- | ---------- | ------- | ----- |
+| Short Mix      | 420+600=1020 | 9.7     | 0          | 0.0     | 9.7   |
+| Improved Mix   | 420          | 4.0     | 1000       | 4.9     | 8.9   |
+| Intensive Mix  | 525          | 5.0     | 1600       | 7.8     | 12.8  |
+| Short Improved | 525          | 5.0     | 400        | 2.0     | 7.0   |
 
 #### 7.3.1 Clarification — Incorporation vs. Development
 
@@ -1087,19 +1097,19 @@ The textbook standard for incorporation is 4–5 minutes at 1st speed (roughly 4
 
 **Verification against textbook (Suas, Ch. 3) — spiral mixer at 100/200 RPM:**
 
-| Mix Type | Textbook | Our Formula | Match |
-|----------|---------|------------|-------|
-| Short Mix | 4–5 min incorp + 6 min dev = 10–11 min (all 1st) | (450+600)/100 = 10.5 min | ✓ |
-| Improved | 4–5 min incorp (1st) + 1000/200 = 5 min (2nd) | 450/100=4.5 + 1000/200=5.0 | ✓ |
-| Intensive | 4–5 min incorp (1st) + 1600/200 = 8 min (2nd) | 500/100=5.0 + 1600/200=8.0 | ✓ |
+| Mix Type  | Textbook                                         | Our Formula                | Match |
+| --------- | ------------------------------------------------ | -------------------------- | ----- |
+| Short Mix | 4–5 min incorp + 6 min dev = 10–11 min (all 1st) | (450+600)/100 = 10.5 min   | ✓     |
+| Improved  | 4–5 min incorp (1st) + 1000/200 = 5 min (2nd)    | 450/100=4.5 + 1000/200=5.0 | ✓     |
+| Intensive | 4–5 min incorp (1st) + 1600/200 = 8 min (2nd)    | 500/100=5.0 + 1600/200=8.0 | ✓     |
 
 **Cross-mixer verification — oblique at 40/80 RPM:**
 
-| Mix Type | Textbook | Computed | Match |
-|----------|---------|---------|-------|
-| Short Mix | 4–5 min incorp + 600/40 = 15 min dev = 19–20 min (all 1st) | (180+600)/40 = 19.5 min | ✓ |
-| Improved | 4–5 min incorp (1st) + 1000/80 = 12.5 min (2nd) | 180/40=4.5 + 1000/80=12.5 | ✓ |
-| Intensive | 4–5 min incorp (1st) + 1600/80 = 20 min (2nd) | 180/40=4.5 + 1600/80=20.0 | ✓ |
+| Mix Type  | Textbook                                                   | Computed                  | Match |
+| --------- | ---------------------------------------------------------- | ------------------------- | ----- |
+| Short Mix | 4–5 min incorp + 600/40 = 15 min dev = 19–20 min (all 1st) | (180+600)/40 = 19.5 min   | ✓     |
+| Improved  | 4–5 min incorp (1st) + 1000/80 = 12.5 min (2nd)            | 180/40=4.5 + 1000/80=12.5 | ✓     |
+| Intensive | 4–5 min incorp (1st) + 1600/80 = 20 min (2nd)              | 180/40=4.5 + 1600/80=20.0 | ✓     |
 
 ### 7.4 Calibration Over Time
 
@@ -1121,11 +1131,11 @@ Compare with the mixer profile's `friction_factor × friction_mult` — track dr
 
 ### 7.6 Seed Mixer Profiles
 
-| Mixer | Type | Friction | RPM1 | RPM2 | Improved 1st | Intensive 1st | Short Improved 1st |
-|-------|------|---------|------|------|-------------|--------------|-------------------|
-| Caplain | SPIRAL | 12 | 105 | 204 | 420 | 525 | 525 |
-| Haussler | SPIRAL | 14 | 130 | 180 | 455 | 455 | 520 |
-| Bhk | SPIRAL | 10 | 150 | 300 | 420 | 450 | 525 |
+| Mixer    | Type   | Friction | RPM1 | RPM2 | Improved 1st | Intensive 1st | Short Improved 1st |
+| -------- | ------ | -------- | ---- | ---- | ------------ | ------------- | ------------------ |
+| Caplain  | SPIRAL | 12       | 105  | 204  | 420          | 525           | 525                |
+| Haussler | SPIRAL | 14       | 130  | 180  | 455          | 455           | 520                |
+| Bhk      | SPIRAL | 10       | 150  | 300  | 420          | 450           | 525                |
 
 ### 7.8 Double Hydration Technique
 
@@ -1154,6 +1164,7 @@ Salt and yeast are excluded from the autolyse by default because both counter it
 **Overrides:** The baker can drag any ingredient — including preferments — between the Autolyse Mix and Final Mix lists in the UI. Overrides are stored as a sparse map on the recipe (`autolyse_overrides`). Only non-default positions are stored — moving an ingredient back to its default list deletes the override entry. This means an empty `{}` = all engine defaults.
 
 **Precedence rules:**
+
 1. PREFERMENT with `enabled !== true` → skip (not active)
 2. `overrides[ing.id] === 'autolyse'` → autolyse list
 3. `overrides[ing.id] === 'final'` → final mix list
@@ -1211,11 +1222,13 @@ def calc_autolyse_split(recipe, all_ingredients, all_preferments, overrides={}):
 When autolyse is enabled, the engine auto-inserts process steps. The stage and labels depend on whether a preferment ends up in the autolyse group (see §8.5 Fermentolyse):
 
 **Pure autolyse** (no preferment in autolyse group):
+
 1. **Autolyse Mix** (stage: `AUTOLYSE`) — flour, water, 1st speed, until just combined
 2. **Autolyse Rest** (stage: `AUTOLYSE`) — cover, rest for `autolyse_duration_min`
 3. **Final Mix** (stage: `MIXING`) — add salt, yeast, preferments, and all remaining ingredients
 
 **Fermentolyse** (a preferment is in the autolyse group):
+
 1. **Fermentolyse Mix** (stage: `FERMENTOLYSE`) — flour, water, and levain/poolish, 1st speed, until just combined
 2. **Fermentolyse Rest** (stage: `FERMENTOLYSE`) — cover and rest; fermentation begins during rest
 3. **Final Mix** (stage: `MIXING`) — add remaining ingredients
@@ -1234,18 +1247,19 @@ The autolyse split (§8.2) includes enabled preferments in the ingredient lists.
 
 The matrix evaluates in order (first match wins):
 
-| # | Condition | Result | Rationale |
-|---|-----------|--------|-----------|
-| 0 | No BP data (totalPfBp = 0) | keep AUTOLYSE | No data to evaluate — keep default |
-| 1 | Levain hydration < 65% | INCORPORATION | Stiff levain — concentrated acidity, tightens gluten |
-| 2 | Whole wheat > 40% of total flour | INCORPORATION | WW benefits from clean enzyme activation without acid |
-| 3 | Inoculation >= 25% | AUTOLYSE (fermentolyse) | Levain IS the dough structure |
-| 4 | Inoculation < 15% AND waterRatio < 20% | INCORPORATION | Low inoculation + low water — clean autolyse preferred |
-| 5 | Inoculation 15–25% AND total hydration >= 75% | AUTOLYSE (fermentolyse) | High hydration gray zone — extensible dough benefits |
-| 6 | Inoculation 15–25% AND total hydration < 75% | INCORPORATION | Low hydration gray zone — exclude levain |
-| 7 | Fallback | AUTOLYSE | Shouldn't reach here |
+| #   | Condition                                     | Result                  | Rationale                                              |
+| --- | --------------------------------------------- | ----------------------- | ------------------------------------------------------ |
+| 0   | No BP data (totalPfBp = 0)                    | keep AUTOLYSE           | No data to evaluate — keep default                     |
+| 1   | Levain hydration < 65%                        | INCORPORATION           | Stiff levain — concentrated acidity, tightens gluten   |
+| 2   | Whole wheat > 40% of total flour              | INCORPORATION           | WW benefits from clean enzyme activation without acid  |
+| 3   | Inoculation >= 25%                            | AUTOLYSE (fermentolyse) | Levain IS the dough structure                          |
+| 4   | Inoculation < 15% AND waterRatio < 20%        | INCORPORATION           | Low inoculation + low water — clean autolyse preferred |
+| 5   | Inoculation 15–25% AND total hydration >= 75% | AUTOLYSE (fermentolyse) | High hydration gray zone — extensible dough benefits   |
+| 6   | Inoculation 15–25% AND total hydration < 75%  | INCORPORATION           | Low hydration gray zone — exclude levain               |
+| 7   | Fallback                                      | AUTOLYSE                | Shouldn't reach here                                   |
 
 Metrics used by the matrix (all ratio denominators are TFQ-based — K + PF contributions — not K alone):
+
 - **inoculationPct** = PF flour / total formula flour (TFQ: sum of flour K values + flour inside all enabled PFs)
 - **hydration** = PF water / PF flour (null if flour = 0)
 - **waterRatio** = PF water / total formula water (TFQ: sum of liquid K values + water inside all enabled PFs)
@@ -1255,7 +1269,7 @@ Metrics used by the matrix (all ratio denominators are TFQ-based — K + PF cont
 
 When a levain stays in AUTOLYSE (rules 3, 5), the mixing steps use the FERMENTOLYSE stage instead of AUTOLYSE (see §8.5).
 
-**Rye autolyse warning:** When rye flour exceeds 30% of total flour and there are ingredients classified as AUTOLYSE, the engine emits a warning: *"Rye flour is >30% of total flour. Autolyse is typically not beneficial for high-rye doughs — rye lacks the gluten proteins that autolyse develops. Consider disabling autolyse."* Displayed as an amber banner on the autolyse split card.
+**Rye autolyse warning:** When rye flour exceeds 30% of total flour and there are ingredients classified as AUTOLYSE, the engine emits a warning: _"Rye flour is >30% of total flour. Autolyse is typically not beneficial for high-rye doughs — rye lacks the gluten proteins that autolyse develops. Consider disabling autolyse."_ Displayed as an amber banner on the autolyse split card.
 
 The baker can override any decision by dragging PFs between lists, just like any other ingredient. The override system (§8.2) applies uniformly.
 
@@ -1266,11 +1280,13 @@ The baker can override any decision by dragging PFs between lists, just like any
 When autolyse is enabled and a PREFERMENT ingredient ends up in the AUTOLYSE group (via the sourdough matrix or baker override), the technique is more accurately called **fermentolyse** — flour, water, and levain are combined and rested together, allowing fermentation to begin during the rest period alongside the enzymatic activity of a traditional autolyse.
 
 The engine detects this automatically:
+
 ```
 isFermentolyse = autolyseGroup.some(i => i.category === 'PREFERMENT')
 ```
 
 When fermentolyse is detected:
+
 - **Stage:** `FERMENTOLYSE` (not `AUTOLYSE`)
 - **Step titles:** "Fermentolyse Mix" / "Fermentolyse Rest" (not "Autolyse Mix" / "Autolyse Rest")
 - **Rest description:** "Cover and rest. Fermentation begins during rest — enzymatic activity and early acid development occur simultaneously."
@@ -1349,25 +1365,25 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 
 **Incorporation timing by category:**
 
-| Category | When to Add | Condition / Notes |
-|----------|-----------|------------------|
-| FLOUR | Beginning (1st speed) | Always first, with water |
-| LIQUID | Beginning (1st speed) | Hydrates flour proteins and starch |
-| LEAVENING | Beginning (1st speed) | With flour + water (exception: instant dry yeast can go in before autolyse) |
-| SEASONING (salt) | Beginning (1st speed) | Can go in with flour + water despite common myths; or after autolyse if enabled |
-| ENRICHMENT (low fat, ≤4% BP) | Beginning (1st speed) | Small amounts don't impair gluten formation |
-| ENRICHMENT (med fat, 5–15% BP) | Halfway through 2nd speed | Fat lubricates protein chains, delaying gluten bonding |
-| ENRICHMENT (high fat, >15% BP) | Near end of 2nd speed | Requires near-full gluten development to support the fat load |
-| ENRICHMENT (liquid fat/oil) | Beginning (1st speed) | Part of hydration; large amounts can go after full development in 1st speed |
-| ENRICHMENT (eggs) | Beginning (1st speed) | Major hydration role; always include ≥10% water alongside eggs |
-| SWEETENER (≤12% BP) | Beginning (1st speed) | Low sugar doesn't disrupt gluten |
-| SWEETENER (>12% BP) | In stages, or after development | Sugar is hygroscopic — large amounts steal water from proteins |
-| FLAVORING (dry powders) | Beginning (1st speed) | Malt powder, milk powder, etc. — with flour |
-| CONDITIONER | Beginning (1st speed) | Ascorbic acid, vital wheat gluten, DATEM, lecithin, enzymes, L-cysteine — always INCORPORATION timing |
-| MIXIN (nuts, fruit, chocolate) | End of mix, 1st speed ONLY | After full gluten development; 2nd speed would shred gluten bonds |
-| PREFERMENT (liquid — Poolish) | Autolyse (if water ratio >= 15%) or final mix | Water-ratio threshold: large poolish aids hydration, small poolish doesn't justify inclusion |
-| PREFERMENT (liquid — Levain) | Autolyse or final mix (sourdough matrix §8.4) | Depends on inoculation %, levain hydration, flour composition, and total dough hydration |
-| PREFERMENT (stiff) | After autolyse / beginning of final mix | Biga, PFD, Sponge — higher yeast concentration would initiate fermentation |
+| Category                       | When to Add                                   | Condition / Notes                                                                                     |
+| ------------------------------ | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| FLOUR                          | Beginning (1st speed)                         | Always first, with water                                                                              |
+| LIQUID                         | Beginning (1st speed)                         | Hydrates flour proteins and starch                                                                    |
+| LEAVENING                      | Beginning (1st speed)                         | With flour + water (exception: instant dry yeast can go in before autolyse)                           |
+| SEASONING (salt)               | Beginning (1st speed)                         | Can go in with flour + water despite common myths; or after autolyse if enabled                       |
+| ENRICHMENT (low fat, ≤4% BP)   | Beginning (1st speed)                         | Small amounts don't impair gluten formation                                                           |
+| ENRICHMENT (med fat, 5–15% BP) | Halfway through 2nd speed                     | Fat lubricates protein chains, delaying gluten bonding                                                |
+| ENRICHMENT (high fat, >15% BP) | Near end of 2nd speed                         | Requires near-full gluten development to support the fat load                                         |
+| ENRICHMENT (liquid fat/oil)    | Beginning (1st speed)                         | Part of hydration; large amounts can go after full development in 1st speed                           |
+| ENRICHMENT (eggs)              | Beginning (1st speed)                         | Major hydration role; always include ≥10% water alongside eggs                                        |
+| SWEETENER (≤12% BP)            | Beginning (1st speed)                         | Low sugar doesn't disrupt gluten                                                                      |
+| SWEETENER (>12% BP)            | In stages, or after development               | Sugar is hygroscopic — large amounts steal water from proteins                                        |
+| FLAVORING (dry powders)        | Beginning (1st speed)                         | Malt powder, milk powder, etc. — with flour                                                           |
+| CONDITIONER                    | Beginning (1st speed)                         | Ascorbic acid, vital wheat gluten, DATEM, lecithin, enzymes, L-cysteine — always INCORPORATION timing |
+| MIXIN (nuts, fruit, chocolate) | End of mix, 1st speed ONLY                    | After full gluten development; 2nd speed would shred gluten bonds                                     |
+| PREFERMENT (liquid — Poolish)  | Autolyse (if water ratio >= 15%) or final mix | Water-ratio threshold: large poolish aids hydration, small poolish doesn't justify inclusion          |
+| PREFERMENT (liquid — Levain)   | Autolyse or final mix (sourdough matrix §8.4) | Depends on inoculation %, levain hydration, flour composition, and total dough hydration              |
+| PREFERMENT (stiff)             | After autolyse / beginning of final mix       | Biga, PFD, Sponge — higher yeast concentration would initiate fermentation                            |
 
 **Current implementation:** The engine auto-generates multi-phase mixing steps via `suggestMixingSteps()` in `process-steps.js`. It classifies all ingredients into four phases — AUTOLYSE, INCORPORATION, FAT_ADDITION, MIXIN — using `classifyAllIngredients()` in `mixing-phases.js`. For liquid preferments, a post-pass refines classification: Poolish uses a water-ratio threshold, Levain uses the sourdough decision matrix (§8.4). When autolyse is enabled and a preferment ends up in the autolyse group, the engine uses the FERMENTOLYSE stage (§8.5). The baker can further customize via the Process Steps editor or drag overrides.
 
@@ -1378,6 +1394,7 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 `suggestProcessSteps()` in `process-steps.js` generates a complete process — from first mix through final proof — with `duration_min`, `temperature`, and `mixer_speed` populated where derivable.
 
 **Inputs:**
+
 - `ingredients` — recipe ingredient list (used for phase classification)
 - `hasAutolyse` — whether autolyse is enabled
 - `autolyseDurationMin` — autolyse rest duration (default 20)
@@ -1391,33 +1408,35 @@ When the engine auto-generates mixing process steps for a recipe, it should resp
 
 **Step 2: Derive process parameters from mix type.** `MIX_TYPE_PROCESS` lookup table (sourced from Suas Ch. 3):
 
-| Parameter | Short Mix | Improved Mix | Intensive Mix | Short Improved |
-|-----------|-----------|-------------|--------------|----------------|
-| Bulk ferment (min) | 210 | 90 | 20 | 60 |
-| Folds during bulk | 3 | 1 | 0 | 1 |
-| Fold interval (min) | 45 | 45 | — | 30 |
-| Bench rest (min) | 20 | 20 | 15 | 20 |
-| Final proof (min) | 50 | 75 | 105 | 60 |
+| Parameter           | Short Mix | Improved Mix | Intensive Mix | Short Improved |
+| ------------------- | --------- | ------------ | ------------- | -------------- |
+| Bulk ferment (min)  | 210       | 90           | 20            | 60             |
+| Folds during bulk   | 3         | 1            | 0             | 1              |
+| Fold interval (min) | 45        | 45           | —             | 30             |
+| Bench rest (min)    | 20        | 20           | 15            | 20             |
+| Final proof (min)   | 50        | 75           | 105           | 60             |
 
 **Step 3: Enrichment detection.** If FAT_ADDITION phase has ingredients → enriched dough. Affects proof temperature (27°C enriched, 25°C lean) and fermentation descriptions.
 
 **Step 4: Mixer speed derivation** from `MIX_TYPES[mixType].has_second`:
 
-| Step | has_second=true | has_second=false |
-|------|----------------|-----------------|
-| Autolyse/Fermentolyse Mix | 1st | 1st |
-| Incorporation | 1st → 2nd | 1st |
-| Development | 2nd | _(skipped)_ |
-| Fat & Sugar Addition | 1st → 2nd | 1st |
-| Mix-ins | 1st | 1st |
+| Step                      | has_second=true | has_second=false |
+| ------------------------- | --------------- | ---------------- |
+| Autolyse/Fermentolyse Mix | 1st             | 1st              |
+| Incorporation             | 1st → 2nd       | 1st              |
+| Development               | 2nd             | _(skipped)_      |
+| Fat & Sugar Addition      | 1st → 2nd       | 1st              |
+| Mix-ins                   | 1st             | 1st              |
 
 **Step 5: Temperature assignment:**
+
 - Bulk fermentation / folds → DDT
 - Final proof → 25°C (lean) or 27°C (enriched)
 - Mixing steps → null (mixer friction is a production variable)
 - Bench rest → null (room temperature)
 
 **Step 6: Generate steps in order:**
+
 1. Mixing phase steps (autolyse/fermentolyse → incorporation → development → fat addition → mix-ins)
 2. FOLD — bulk fermentation is represented as a sequence of fold steps. Each step is a timed fermentation segment; steps with fold actions include "Stretch and fold at end of phase" in the description. Total steps = folds + 1 (N fold-action phases + 1 final rest phase).
    - If folds = 0, a single FOLD step with the full bulk duration
@@ -1440,13 +1459,13 @@ Retarding delays fermentation by lowering dough temperature. At 4°C, yeast and 
 
 Retard in bulk immediately after mixing, before dividing.
 
-| Parameter | Value |
-|-----------|-------|
-| Retarder temp | 7–9°C (45–48°F) |
-| Duration | 12–18 h |
-| Yeast (fresh) | ~1.2% BP |
-| DDT | 23°C |
-| Placement | After mixing, before divide |
+| Parameter     | Value                       |
+| ------------- | --------------------------- |
+| Retarder temp | 7–9°C (45–48°F)             |
+| Duration      | 12–18 h                     |
+| Yeast (fresh) | ~1.2% BP                    |
+| DDT           | 23°C                        |
+| Placement     | After mixing, before divide |
 
 After retarding: remove, divide immediately or temper ~1 h, then preshape → rest → shape → proof → bake normally. Fermentation is not completely stopped at 7–9°C — slow gas and acid production continues, preserving product quality. No dough conditioners needed with good flour. Handles high-hydration doughs (ciabatta) well. No surface blisters (retarded in bulk before shaping).
 
@@ -1456,15 +1475,15 @@ After retarding: remove, divide immediately or temper ~1 h, then preshape → re
 
 Retard after shaping — replaces conventional proof. Bake directly from retarder.
 
-| Parameter | Value |
-|-----------|-------|
-| Retarder temp | 10°C (50°F) |
-| Duration | 12–15 h |
-| Yeast (fresh) | 0.8–1% BP |
-| DDT | 23°C |
-| Mix development | Improved → intensive |
-| Dough consistency | Slightly stiffer |
-| Placement | After shape |
+| Parameter         | Value                |
+| ----------------- | -------------------- |
+| Retarder temp     | 10°C (50°F)          |
+| Duration          | 12–15 h              |
+| Yeast (fresh)     | 0.8–1% BP            |
+| DDT               | 23°C                 |
+| Mix development   | Improved → intensive |
+| Dough consistency | Slightly stiffer     |
+| Placement         | After shape          |
 
 After mixing: 20–30 min bulk → divide → preshape → 20–30 min rest → shape → retard. At 10°C yeast produces a small amount of CO₂ slowly — after 12 h the dough has enough gas to bake directly from the retarder. Bake window: 12–15 h (same batch can be baked across a several-hour window).
 
@@ -1474,16 +1493,16 @@ After mixing: 20–30 min bulk → divide → preshape → 20–30 min rest → 
 
 Retard after shaping at very low temp, then warm-proof before baking.
 
-| Parameter | Value |
-|-----------|-------|
-| Retarder temp | 3–4°C (38–40°F) |
-| Duration | 12–48 h |
+| Parameter          | Value                              |
+| ------------------ | ---------------------------------- |
+| Retarder temp      | 3–4°C (38–40°F)                    |
+| Duration           | 12–48 h                            |
 | Proof after retard | Room temp, or auto-warm to 22–24°C |
-| Yeast (fresh) | 1.8–2% BP |
-| DDT | 23°C |
-| Mix development | Improved → intensive |
-| Dough consistency | Stiffer, shape tightly |
-| Placement | After shape |
+| Yeast (fresh)      | 1.8–2% BP                          |
+| DDT                | 23°C                               |
+| Mix development    | Improved → intensive               |
+| Dough consistency  | Stiffer, shape tightly             |
+| Placement          | After shape                        |
 
 After mixing: 15–20 min bulk → divide → preshape → 20 min rest → shape tightly → retard. Two options: (1) remove from retarder and proof at room temp, or (2) proofer-retarder auto-warms to 22–24°C after the retarding period. Baker can have fresh bread ~1 h after arriving.
 
@@ -1492,6 +1511,7 @@ After mixing: 15–20 min bulk → divide → preshape → 20 min rest → shape
 #### Current Engine Default
 
 The engine suggests the **retarding-proofing** technique: SHAPE → RETARD (4°C, 12 h) → PROOF → BAKE. This is the most common artisan workflow. The baker can:
+
 - Delete RETARD for a straight (non-retarded) process
 - Adjust temperature (10°C for slow final proof, 7°C for delayed first fermentation)
 - Move RETARD earlier in the sequence (before PRESHAPE for delayed first fermentation)
@@ -1543,6 +1563,7 @@ def calc_batch_with_loss(recipe):
 ### 11.3 Example
 
 80g finished panettone, 3% process loss, 12% bake loss:
+
 ```
 raw = 80 / (0.97 × 0.88) = 93.7g dough per piece
 scale_factor = 93.7 / 80 = 1.171x
@@ -1552,12 +1573,12 @@ The baker scales 93.7g of dough per piece. After ~3% sticks to equipment during 
 
 ### 11.4 Typical Ranges
 
-| Product Type | Process Loss | Bake Loss | Notes |
-|-------------|-------------|-----------|-------|
-| Lean bread (baguette, batard) | 2–3% | 12–18% | High bake loss from high oven temp, steam, thin crust |
-| Enriched bread (brioche, Panettone) | 2–4% | 8–12% | Fats reduce moisture loss; lower oven temp |
-| Pastry (croissant) | 3–5% | 10–15% | Lamination scraps increase process loss |
-| Pizza | 1–2% | 8–12% | Simple shapes, minimal handling |
+| Product Type                        | Process Loss | Bake Loss | Notes                                                 |
+| ----------------------------------- | ------------ | --------- | ----------------------------------------------------- |
+| Lean bread (baguette, batard)       | 2–3%         | 12–18%    | High bake loss from high oven temp, steam, thin crust |
+| Enriched bread (brioche, Panettone) | 2–4%         | 8–12%     | Fats reduce moisture loss; lower oven temp            |
+| Pastry (croissant)                  | 3–5%         | 10–15%    | Lamination scraps increase process loss               |
+| Pizza                               | 1–2%         | 8–12%     | Simple shapes, minimal handling                       |
 
 ### 11.5 Production Module Integration (Future)
 
@@ -1685,6 +1706,7 @@ def diff_versions(version_a, version_b):
 ```
 
 **Key rules:**
+
 - Ingredient identity = UUID, assigned at creation, never changes
 - Renaming an ingredient does NOT change its UUID
 - Diff detects renames as a distinct change type ("renamed"), not remove + add
@@ -1707,28 +1729,29 @@ Version lists are paginated server-side using SQLite `LIMIT ? OFFSET ?`:
 
 Quick-reference: every output the engine produces.
 
-| Output | What | Formula | Depends On |
-|--------|------|---------|------------|
-| Overall Baker's % | TFQ[i] / SUM(TFQ_flours) | §4.2 | Total formula |
-| Pre-ferment ratio | PF_base_qty / SUM(K_flours) | §4.3 | K, PF.base_qty |
-| Pre-ferment qty | (ratio × flour / PF_total_BP) × BP[i] | §4.4 | K, PF Baker's % |
-| Total formula qty | K[i] + sum(PF breakdowns for i) | §4.7 | K, PF breakdowns |
-| Final dough qty | Total formula - sum(PF contributions) | §4.6 | K, all PF qtys |
-| Final dough Baker's % | K[i] / SUM(Final_dough_flours) | §4.9 | K, final dough |
-| Per-item weight | Final_dough[i] × yield / G_total | §4.10 | Final dough, yield |
-| Batch qty | Per_item[i] × num_pieces | §4.11 | Per-item, num_pieces |
-| Scale factor | target / current (by mode) | §4.12 | Scaling mode, target |
-| Pre-fermented flour % | PF_flour / Total_flour | §4.13 | PF breakdown, total |
-| Hydration | Total_water / Total_flour | §4.14 | Total formula |
-| Water temp | (DDT × N) - temps - friction | §6 | DDT, env, mixer |
-| Effective friction | friction_factor × mix_type_mult | §7.2 | Mixer profile, mix type |
-| 1st speed min | calibration_rounds / first_speed_rpm | §7.3 | Mixer profile, mix type |
-| 2nd speed min | target_rounds / second_speed_rpm | §7.3 | Mixer profile, mix type |
-| Adjusted yield | yield / ((1-process_loss)(1-bake_loss)) | §11 | yield, loss % |
+| Output                | What                                    | Formula | Depends On              |
+| --------------------- | --------------------------------------- | ------- | ----------------------- |
+| Overall Baker's %     | TFQ[i] / SUM(TFQ_flours)                | §4.2    | Total formula           |
+| Pre-ferment ratio     | PF_base_qty / SUM(K_flours)             | §4.3    | K, PF.base_qty          |
+| Pre-ferment qty       | (ratio × flour / PF_total_BP) × BP[i]   | §4.4    | K, PF Baker's %         |
+| Total formula qty     | K[i] + sum(PF breakdowns for i)         | §4.7    | K, PF breakdowns        |
+| Final dough qty       | Total formula - sum(PF contributions)   | §4.6    | K, all PF qtys          |
+| Final dough Baker's % | K[i] / SUM(Final_dough_flours)          | §4.9    | K, final dough          |
+| Per-item weight       | Final_dough[i] × yield / G_total        | §4.10   | Final dough, yield      |
+| Batch qty             | Per_item[i] × num_pieces                | §4.11   | Per-item, num_pieces    |
+| Scale factor          | target / current (by mode)              | §4.12   | Scaling mode, target    |
+| Pre-fermented flour % | PF_flour / Total_flour                  | §4.13   | PF breakdown, total     |
+| Hydration             | Total_water / Total_flour               | §4.14   | Total formula           |
+| Water temp            | (DDT × N) - temps - friction            | §6      | DDT, env, mixer         |
+| Effective friction    | friction_factor × mix_type_mult         | §7.2    | Mixer profile, mix type |
+| 1st speed min         | calibration_rounds / first_speed_rpm    | §7.3    | Mixer profile, mix type |
+| 2nd speed min         | target_rounds / second_speed_rpm        | §7.3    | Mixer profile, mix type |
+| Adjusted yield        | yield / ((1-process_loss)(1-bake_loss)) | §11     | yield, loss %           |
 
 **The K model (decided):** K = final dough / base recipe quantity. Pre-ferments add mass on top. Total formula ≥ K. This matches the original spreadsheet behavior and the baker's mental model.
 
 **All inputs reduce to:**
+
 - **J** — ingredient names
 - **K** — ingredient quantities in grams (final dough amounts)
 - **Category** — per ingredient (set once)
@@ -1750,18 +1773,18 @@ Quick-reference: every output the engine produces.
   "process_loss_pct": 0.03,
   "bake_loss_pct": 0.12,
   "ingredients": [
-    {"name": "Bread flour",         "category": "FLOUR",       "K": 234  },
-    {"name": "Butter",              "category": "ENRICHMENT",  "K": 357  },
-    {"name": "Water",               "category": "LIQUID",      "K": 322  },
-    {"name": "Salt",                "category": "SEASONING",   "K": 14   },
-    {"name": "Honey",               "category": "SWEETENER",   "K": 54   },
-    {"name": "Sugar",               "category": "SWEETENER",   "K": 234  },
-    {"name": "Egg Yolks",           "category": "ENRICHMENT",  "K": 70   },
-    {"name": "Candied lemon peel",  "category": "MIXIN",       "K": 124  },
-    {"name": "Candied orange peel", "category": "MIXIN",       "K": 357  },
-    {"name": "Raisins",             "category": "MIXIN",       "K": 357  },
-    {"name": "Vanilla Bean",        "category": "FLAVORING",   "K": 2.5  },
-    {"name": "Orange Peel",         "category": "FLAVORING",   "K": 1.5  }
+    { "name": "Bread flour", "category": "FLOUR", "K": 234 },
+    { "name": "Butter", "category": "ENRICHMENT", "K": 357 },
+    { "name": "Water", "category": "LIQUID", "K": 322 },
+    { "name": "Salt", "category": "SEASONING", "K": 14 },
+    { "name": "Honey", "category": "SWEETENER", "K": 54 },
+    { "name": "Sugar", "category": "SWEETENER", "K": 234 },
+    { "name": "Egg Yolks", "category": "ENRICHMENT", "K": 70 },
+    { "name": "Candied lemon peel", "category": "MIXIN", "K": 124 },
+    { "name": "Candied orange peel", "category": "MIXIN", "K": 357 },
+    { "name": "Raisins", "category": "MIXIN", "K": 357 },
+    { "name": "Vanilla Bean", "category": "FLAVORING", "K": 2.5 },
+    { "name": "Orange Peel", "category": "FLAVORING", "K": 1.5 }
   ],
   "preferments": [
     {
@@ -1796,10 +1819,10 @@ Quick-reference: every output the engine produces.
   "process_loss_pct": 0.02,
   "bake_loss_pct": 0.15,
   "ingredients": [
-    {"name": "Bread flour",  "category": "FLOUR",      "K": 1000 },
-    {"name": "Water",        "category": "LIQUID",      "K": 700  },
-    {"name": "Salt",         "category": "SEASONING",   "K": 20   },
-    {"name": "Yeast",        "category": "LEAVENING",   "K": 3    }
+    { "name": "Bread flour", "category": "FLOUR", "K": 1000 },
+    { "name": "Water", "category": "LIQUID", "K": 700 },
+    { "name": "Salt", "category": "SEASONING", "K": 20 },
+    { "name": "Yeast", "category": "LEAVENING", "K": 3 }
   ],
   "preferments": [
     {
@@ -1829,10 +1852,10 @@ Quick-reference: every output the engine produces.
   "process_loss_pct": 0.02,
   "bake_loss_pct": 0.16,
   "ingredients": [
-    {"name": "Bread flour",    "category": "FLOUR",      "K": 850  },
-    {"name": "WW Flour",       "category": "FLOUR",      "K": 150  },
-    {"name": "Water",          "category": "LIQUID",      "K": 750  },
-    {"name": "Salt",           "category": "SEASONING",   "K": 20   }
+    { "name": "Bread flour", "category": "FLOUR", "K": 850 },
+    { "name": "WW Flour", "category": "FLOUR", "K": 150 },
+    { "name": "Water", "category": "LIQUID", "K": 750 },
+    { "name": "Salt", "category": "SEASONING", "K": 20 }
   ],
   "preferments": [
     {
@@ -1859,15 +1882,15 @@ Quick-reference: every output the engine produces.
   "ddt": 22,
   "autolyse": false,
   "process_loss_pct": 0.03,
-  "bake_loss_pct": 0.10,
+  "bake_loss_pct": 0.1,
   "ingredients": [
-    {"name": "Bread flour",  "category": "FLOUR",       "K": 1000 },
-    {"name": "Eggs",         "category": "ENRICHMENT",   "K": 500  },
-    {"name": "Butter",       "category": "ENRICHMENT",   "K": 500  },
-    {"name": "Sugar",        "category": "SWEETENER",    "K": 120  },
-    {"name": "Salt",         "category": "SEASONING",    "K": 20   },
-    {"name": "Yeast",        "category": "LEAVENING",    "K": 30   },
-    {"name": "Milk",         "category": "LIQUID",        "K": 50   }
+    { "name": "Bread flour", "category": "FLOUR", "K": 1000 },
+    { "name": "Eggs", "category": "ENRICHMENT", "K": 500 },
+    { "name": "Butter", "category": "ENRICHMENT", "K": 500 },
+    { "name": "Sugar", "category": "SWEETENER", "K": 120 },
+    { "name": "Salt", "category": "SEASONING", "K": 20 },
+    { "name": "Yeast", "category": "LEAVENING", "K": 30 },
+    { "name": "Milk", "category": "LIQUID", "K": 50 }
   ],
   "preferments": [
     {
@@ -1904,26 +1927,35 @@ Dough type is the highest-level classification a baker makes. It determines proc
 
 #### Bread (8 types)
 
-| Key | Label | Autolyse | Mix Type | DDT | Process Loss | Bake Loss |
-|-----|-------|----------|----------|-----|-------------|-----------|
-| `LEAN` | Lean | Yes, 20 min | Short Mix | 24 | 3% | 12% |
-| `ENRICHED` | Enriched | No | Improved Mix | 24 | 2% | 10% |
-| `RICH` | Rich | No | Intensive Mix | 22 | 2% | 8% |
-| `LAMINATED_YEASTED` | Laminated (Yeasted) | No | Short Mix | 22 | 5% | 10% |
-| `LAMINATED` | Laminated (Puff) | No | Short Mix | 20 | 5% | 10% |
-| `SOURDOUGH` | Sourdough | Yes, 30 min | Short Mix | 24 | 3% | 14% |
-| `PIZZA` | Pizza | No | Intensive Mix | 24 | 2% | 8% |
-| `FLATBREAD` | Flatbread | No | Improved Mix | 24 | 2% | 8% |
+| Key                 | Label               | Autolyse    | Mix Type      | DDT | Process Loss | Bake Loss |
+| ------------------- | ------------------- | ----------- | ------------- | --- | ------------ | --------- |
+| `LEAN`              | Lean                | Yes, 20 min | Short Mix     | 24  | 3%           | 12%       |
+| `ENRICHED`          | Enriched            | No          | Improved Mix  | 24  | 2%           | 10%       |
+| `RICH`              | Rich                | No          | Intensive Mix | 22  | 2%           | 8%        |
+| `LAMINATED_YEASTED` | Laminated (Yeasted) | No          | Short Mix     | 22  | 5%           | 10%       |
+| `LAMINATED`         | Laminated (Puff)    | No          | Short Mix     | 20  | 5%           | 10%       |
+| `SOURDOUGH`         | Sourdough           | Yes, 30 min | Short Mix     | 24  | 3%           | 14%       |
+| `PIZZA`             | Pizza               | No          | Intensive Mix | 24  | 2%           | 8%        |
+| `FLATBREAD`         | Flatbread           | No          | Improved Mix  | 24  | 2%           | 8%        |
 
 #### Pastry (5 types)
 
-| Key | Label | Autolyse | Mix Type | DDT | Process Loss | Bake Loss |
-|-----|-------|----------|----------|-----|-------------|-----------|
-| `SHORTCRUST` | Shortcrust | No | Short Mix | 18 | 3% | 5% |
-| `SWEET_PASTRY` | Sweet Pastry | No | Short Mix | 18 | 3% | 5% |
-| `CHOUX` | Choux | No | Short Mix | N/A | 5% | 15% |
-| `COOKIE` | Cookie | No | Short Mix | 20 | 2% | 3% |
-| `PASTA` | Pasta | No | Improved Mix | 22 | 2% | 0% |
+| Key            | Label        | Autolyse | Mix Type     | DDT | Process Loss | Bake Loss |
+| -------------- | ------------ | -------- | ------------ | --- | ------------ | --------- |
+| `SHORTCRUST`   | Shortcrust   | No       | Short Mix    | 18  | 3%           | 5%        |
+| `SWEET_PASTRY` | Sweet Pastry | No       | Short Mix    | 18  | 3%           | 5%        |
+| `CHOUX`        | Choux        | No       | Short Mix    | N/A | 5%           | 15%       |
+| `COOKIE`       | Cookie       | No       | Short Mix    | 20  | 2%           | 3%        |
+| `PASTA`        | Pasta        | No       | Improved Mix | 22  | 2%           | 0%        |
+
+#### Component (4 types)
+
+| Key       | Label   | Autolyse | Mix Type  | DDT | Process Loss | Bake Loss |
+| --------- | ------- | -------- | --------- | --- | ------------ | --------- |
+| `TOPPING` | Topping | No       | Short Mix | N/A | 2%           | 0%        |
+| `GLAZE`   | Glaze   | No       | Short Mix | N/A | 5%           | 0%        |
+| `FILLING` | Filling | No       | Short Mix | N/A | 5%           | 0%        |
+| `SAUCE`   | Sauce   | No       | Short Mix | N/A | 8%           | 0%        |
 
 ### §15.3 Process Step Templates
 
@@ -1941,17 +1973,28 @@ Dough type is the highest-level classification a baker makes. It determines proc
 - **SWEET_PASTRY**: Cream butter+sugar → add egg → add flour → chill → roll & line → bake 170°C
 - **PASTA**: Mix → knead → rest 30 min → roll → cut → dry/cook
 
+**Component types** dispatch to dedicated template generators:
+
+- **TOPPING**: Melt fat (if present) → combine dry → mix wet into dry → store
+- **GLAZE**: Heat liquid → combine ingredients → cool to working temp → apply
+- **FILLING**: Combine dry → cook with liquid → cool (contact wrap) → refrigerate
+- **SAUCE**: Cook sugar (if caramel) → add liquid → reduce → cool → store
+
 ### §15.4 Mix Type Constraints
 
 Soft constraints warn when the selected mix type is unusual for the dough type:
 
-| Dough Type | Allowed Mix Types |
-|------------|------------------|
+| Dough Type        | Allowed Mix Types         |
+| ----------------- | ------------------------- |
 | LAMINATED_YEASTED | Short Mix, Short Improved |
-| LAMINATED | Short Mix, Short Improved |
-| SHORTCRUST | Short Mix |
-| SWEET_PASTRY | Short Mix |
-| COOKIE | Short Mix |
+| LAMINATED         | Short Mix, Short Improved |
+| SHORTCRUST        | Short Mix                 |
+| SWEET_PASTRY      | Short Mix                 |
+| COOKIE            | Short Mix                 |
+| TOPPING           | Short Mix                 |
+| GLAZE             | Short Mix                 |
+| FILLING           | Short Mix                 |
+| SAUCE             | Short Mix                 |
 
 All other dough types allow any mix type without warning.
 
@@ -1961,16 +2004,16 @@ All other dough types allow any mix type without warning.
 
 **Inferable types** (ingredient profile is a strong signal):
 
-| Inferred Type | Signal | Confidence |
-|---|---|---|
-| `SOURDOUGH` | Has enabled LEVAIN preferment | high |
-| `PASTA` | Semolina/durum flour >50% + no yeast/levain | high |
-| `COOKIE` | Chemical leavening + sugar BP >12% + fat BP >10% | medium |
-| `RICH` | Fat BP >12% + yeast | medium |
-| `ENRICHED` | Fat BP 5–12% + yeast | medium |
-| `LEAN` | Fat BP <2% + yeast + sugar BP <5% | medium |
+| Inferred Type | Signal                                           | Confidence |
+| ------------- | ------------------------------------------------ | ---------- |
+| `SOURDOUGH`   | Has enabled LEVAIN preferment                    | high       |
+| `PASTA`       | Semolina/durum flour >50% + no yeast/levain      | high       |
+| `COOKIE`      | Chemical leavening + sugar BP >12% + fat BP >10% | medium     |
+| `RICH`        | Fat BP >12% + yeast                              | medium     |
+| `ENRICHED`    | Fat BP 5–12% + yeast                             | medium     |
+| `LEAN`        | Fat BP <2% + yeast + sugar BP <5%                | medium     |
 
-The 12% fat boundary between ENRICHED and RICH aligns with the point where mixing method must change from improved to intensive (ref: Suas, *Advanced Bread and Pastry*, Ch. 9).
+The 12% fat boundary between ENRICHED and RICH aligns with the point where mixing method must change from improved to intensive (ref: Suas, _Advanced Bread and Pastry_, Ch. 9).
 
 **Not inferable** (same ingredients, different process): LAMINATED_YEASTED, LAMINATED, CHOUX, PIZZA, FLATBREAD, SWEET_PASTRY, SHORTCRUST. Returns `null`.
 
@@ -1978,13 +2021,23 @@ The 12% fat boundary between ENRICHED and RICH aligns with the point where mixin
 
 - Constants & inference: `src/lib/dough-types.js`
 - Database: `recipes.dough_type TEXT` (nullable)
-- Process steps: `suggestProcessSteps()` accepts `doughType` parameter
+- Process steps: `suggestProcessSteps()` accepts `doughType` parameter; Component types dispatch to dedicated generators
 - Version tracking: `dough_type` included in snapshots and diffs
-- UI: `<select>` with `<optgroup>` for Bread/Pastry in recipe header; inference hint when `dough_type` is null
+- UI: shadcn `Select` with grouped headings (Bread / Pastry / Component) in recipe header; inference hint when `dough_type` is null; confirm dialog when changing type with existing process steps
+
+### §15.7 Base Ingredient Category
+
+The engine hardcodes `FLOUR` as the baker's % denominator by default. Non-flour recipes (Cinnamon Sugar, glazes) would get 0% for everything. The `base_ingredient_category` column on `recipes` solves this.
+
+- **Database**: `recipes.base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'`
+- **Engine** (`engine.js`): Uses `recipe.base_ingredient_category` instead of hardcoded `'FLOUR'` for all base qty / baker's % / hydration calculations
+- **UI**: Auto-detect warning when no ingredient matches the current base category; dropdown to pick a new base from categories present in the recipe
+- **Version tracking**: `base_ingredient_category` included in snapshots and diffs
+- **Backward compatible**: Existing recipes default to `FLOUR` — no change in behavior
 
 ---
 
-## §16 Accompanied Recipes (future)
+## §16 Accompanied Recipes
 
 Real-world bakery formulas often consist of multiple sub-recipes produced alongside the main dough.
 
@@ -1994,14 +2047,14 @@ Multi-stage dough builds (Italian Levain, First Dough, Second Dough, etc.) are *
 
 **§5 stays. §16 layers on top for what §5 doesn't cover:**
 
-| Concern | §5 handles? | §16 adds |
-|---|---|---|
-| Calculation (decomposition, total formula, topological sort) | Yes | — |
-| Dependency chain resolution (PF → PF → final dough) | Yes | — |
-| Non-preferment companions (glazes, fillings, cinnamon sugar) | No | These don't contribute to total formula flour or hydration — they're separate preparations produced alongside the main recipe, scaled proportionally |
-| Per-stage process steps | Partial (DDT, fermentation duration) | Full process sequences per sub-recipe — e.g. Italian Levain's "feed every 4h", First Dough's "mix 1st speed only, ferment 2h at 29°C" |
-| Production scheduling across stages | No | §9 timeline needs to walk the dependency DAG to find the critical path — First Dough and Second Dough can run in parallel, Third Dough blocks on both |
-| Independent reuse | No (PFs are embedded inline per recipe) | The same Italian Levain formula used in both Panettone and Pan d'Oro — shared, reusable sub-recipe definitions |
+| Concern                                                      | §5 handles?                             | §16 adds                                                                                                                                              |
+| ------------------------------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Calculation (decomposition, total formula, topological sort) | Yes                                     | —                                                                                                                                                     |
+| Dependency chain resolution (PF → PF → final dough)          | Yes                                     | —                                                                                                                                                     |
+| Non-preferment companions (glazes, fillings, cinnamon sugar) | No                                      | These don't contribute to total formula flour or hydration — they're separate preparations produced alongside the main recipe, scaled proportionally  |
+| Per-stage process steps                                      | Partial (DDT, fermentation duration)    | Full process sequences per sub-recipe — e.g. Italian Levain's "feed every 4h", First Dough's "mix 1st speed only, ferment 2h at 29°C"                 |
+| Production scheduling across stages                          | No                                      | §9 timeline needs to walk the dependency DAG to find the critical path — First Dough and Second Dough can run in parallel, Third Dough blocks on both |
+| Independent reuse                                            | No (PFs are embedded inline per recipe) | Future Phase 3: shared, reusable sub-recipe definitions                                                                                                |
 
 ### §16.2 Categories
 
@@ -2011,12 +2064,12 @@ Multi-stage dough builds (Italian Levain, First Dough, Second Dough, etc.) are *
 
 ### §16.3 Examples (Suas, Ch. 9)
 
-| Main Recipe | Accompanied Recipes |
-|---|---|
-| Sweet Roll Dough | Cinnamon Sugar; Sticky Bun Glaze |
-| Laminated Brioche | Sponge (PF); pastry cream or frangipane (filling) |
-| Columba di Pasqua | Italian Levain (PF); First Dough (staged build); Hazelnut Glaze |
-| Pan d'Oro | Italian Levain; First Dough; Second Dough; Third Dough (4-stage build) |
+| Main Recipe       | Accompanied Recipes                                                    |
+| ----------------- | ---------------------------------------------------------------------- |
+| Sweet Roll Dough  | Cinnamon Sugar; Sticky Bun Glaze                                       |
+| Laminated Brioche | Sponge (PF); pastry cream or frangipane (filling)                      |
+| Columba di Pasqua | Italian Levain (PF); First Dough (staged build); Hazelnut Glaze        |
+| Pan d'Oro         | Italian Levain; First Dough; Second Dough; Third Dough (4-stage build) |
 
 **Pan d'Oro dependency graph** (illustrates non-linear multi-stage builds):
 
@@ -2034,12 +2087,84 @@ Second Dough ─────────┘
 
 Each stage has its own baker's % computed against its own flour. The intermediate doughs appear as PREFERMENT ingredients in subsequent stages, expressed as a baker's % of that stage's flour — §5's engine resolves the full chain.
 
-### §16.4 Design Considerations (TBD)
+### §16.4 Phase 1 — Non-PF Companions (Implemented)
 
-- A recipe can link to 1+ accompanied recipes, each with a role (preferment, filling, glaze, etc.)
-- Accompanied recipes are themselves recipes — they have ingredients, process steps, and can be versioned independently
-- Multi-stage builds form a DAG — stages can depend on multiple predecessors, and the calculation engine (§5) already resolves these via topological sort
-- **Scaling:** each accompanied recipe is its own formula with its own baker's %. When the baker scales the main recipe (e.g. bigger batch), the accompanied recipe scales proportionally — its internal ratios stay fixed, only the total quantity changes to match what the main recipe needs
-- **Non-PF companions** (glazes, fillings) don't participate in §4/§5 calculations — they are scaled independently based on the main recipe's batch size
-- **Reuse:** a sub-recipe (e.g. Italian Levain) could be shared across multiple parent recipes rather than duplicated inline
-- **Versioning (§12):** changing a glaze formula shouldn't create a new version of the parent recipe, but should be traceable
+Companions are normal recipes linked to a parent via the `recipe_companions` table. They are managed in the **Accompanied Recipes card** — separate from the Ingredients table per BBGA convention (companions are separate preparations, not dough ingredients, and don't participate in the dough formula's baker's percentages). The baker defines a quantity (grams) representing how much of the companion is needed for the base recipe batch.
+
+**Data model:**
+
+```sql
+CREATE TABLE IF NOT EXISTS recipe_companions (
+  id TEXT PRIMARY KEY,
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  companion_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'other',  -- 'filling', 'glaze', 'garnish', 'other'
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  qty REAL NOT NULL DEFAULT 0,         -- grams of companion needed for this recipe
+  UNIQUE(recipe_id, companion_recipe_id)
+);
+```
+
+**Companion roles:** `filling`, `glaze`, `garnish`, `other`.
+
+**Accompanied Recipes card:**
+- Each companion row: name (linked), editable qty (grams), role selector, notes, remove button
+- Inline ingredient summary from the companion's own formula (ingredient names, qty, internal BP%, total weight)
+- Companions do NOT appear in the Ingredients table — the dough formula stays pure
+- On the production page, companion ingredient quantities are scaled proportionally based on the qty defined in the parent
+
+**Constraints:**
+- No self-links (a recipe cannot be its own companion)
+- Companion must belong to the same bakery
+- Deleting a parent cascades to delete the link (not the companion recipe)
+- A recipe can be a companion to multiple parents
+
+**Versioning (§12):**
+- Companion links (add/remove/modify) are tracked in version snapshots
+- The versions comparison UI shows companion changes with colored badges
+- Side-by-side comparison highlights added, removed, and modified companions
+
+### §16.5 Phase 2 — Per-PF Process Steps (Implemented)
+
+PF-specific process steps are stored in the existing `process_steps` table with a nullable FK:
+
+```sql
+ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT
+  REFERENCES recipe_ingredients(id) ON DELETE CASCADE;
+```
+
+- `preferment_ingredient_id = NULL` → step belongs to the main recipe
+- `preferment_ingredient_id = 'xyz'` → step belongs to that PF's build process
+
+**New process stages:** `PF_MIX`, `PF_FEED`, `PF_FERMENT`
+
+**Step suggestion** (`suggestPfProcessSteps(pfType, pfName, pfIngredientId)`):
+
+| PF Type        | Suggested Steps                                        |
+| -------------- | ------------------------------------------------------ |
+| POOLISH        | PF_MIX → PF_FERMENT (12–16h, 21°C)                   |
+| BIGA           | PF_MIX → PF_FERMENT (12–16h, 18°C)                   |
+| LEVAIN         | PF_MIX → PF_FEED (every 4h, 29°C) → PF_FERMENT (8–12h, 29°C) |
+| PATE_FERMENTEE | PF_MIX → PF_FERMENT (1–4h, 21°C)                     |
+| SPONGE         | PF_MIX → PF_FERMENT (12–16h, 21°C)                   |
+| CUSTOM         | PF_MIX → PF_FERMENT                                   |
+
+**Recipe builder UI:** PF steps appear inside each PF card with Suggest/Add/Remove controls. Main Process Steps section filters to `!preferment_ingredient_id`.
+
+**Production page:** PF steps grouped under PF name/type headers, shown before the main process steps.
+
+**Versioning:** `preferment_ingredient_id` included in step snapshots and tracked in diffs.
+
+### §16.6 Ingredients Table — PF BP% Display
+
+**Preferment rows:** The BP% column shows the PF's ratio (`pf.base_qty / total_base_flour`) instead of the always-zero `overall_bakers_pct`. This gives bakers immediate visibility of each PF's weight relative to the formula.
+
+**Companions are excluded** from the Ingredients table per BBGA convention — they are separate preparations with their own formulas, not dough ingredients. They are managed in the Accompanied Recipes card.
+
+### §16.7 Future — Phase 3: Reusable Sub-Recipe Library
+
+- Baker defines sub-recipes (PFs, fillings, glazes) once in a template library
+- Templates can be linked from multiple parent recipes
+- Copy-on-link with update notification (not live references)
+- Requires §12 versioning for template version tracking

@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms'
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
-  import { PROCESS_STAGES, suggestProcessSteps } from '$lib/process-steps.js'
+  import { PROCESS_STAGES, suggestProcessSteps, suggestPfProcessSteps } from '$lib/process-steps.js'
   import {
     DOUGH_TYPE_LABELS,
     DOUGH_TYPE_GROUPS,
@@ -30,7 +30,16 @@
     SelectTrigger,
     SelectContent,
     SelectItem,
+    SelectGroup,
+    SelectGroupHeading,
   } from '$lib/components/ui/select/index.js'
+  import {
+    DialogRoot,
+    DialogContent,
+    DialogTitle,
+    DialogDescription,
+    DialogClose,
+  } from '$lib/components/ui/dialog/index.js'
 
   // ── Constants ──────────────────────────────────────────────
 
@@ -122,6 +131,36 @@
   // Dough Type (§15)
   let doughType = $state(data.recipe.dough_type || null)
 
+  // Confirm dialog state
+  let confirmOpen = $state(false)
+  let confirmMessage = $state('')
+  let confirmResolve = $state(null)
+
+  function showConfirm(message) {
+    confirmMessage = message
+    confirmOpen = true
+    return new Promise((resolve) => {
+      confirmResolve = resolve
+    })
+  }
+
+  function onConfirmResult(result) {
+    confirmOpen = false
+    if (confirmResolve) confirmResolve(result)
+    confirmResolve = null
+  }
+
+  // Base Ingredient Category
+  let baseIngredientCategory = $state(data.recipe.base_ingredient_category || 'FLOUR')
+
+  let hasBaseIngredient = $derived(
+    ingredients.some((i) => i.category === baseIngredientCategory && i.base_qty > 0)
+  )
+
+  let presentCategories = $derived(
+    [...new Set(ingredients.filter((i) => i.category !== 'PREFERMENT' && i.base_qty > 0).map((i) => i.category))]
+  )
+
   // Mix type constraint warning
   let mixTypeWarning = $derived.by(() => {
     if (!doughType) return null
@@ -138,7 +177,7 @@
     return inferDoughType(ingredients)
   })
 
-  function onDoughTypeChange(newType) {
+  async function onDoughTypeChange(newType) {
     const oldType = doughType
     doughType = newType || null
     if (!newType) return
@@ -148,9 +187,8 @@
 
     // If recipe has ingredients, confirm before overwriting
     if (ingredients.length > 0 && oldType !== newType) {
-      if (!confirm(`Apply ${DOUGH_TYPE_LABELS[newType]} defaults? This will update DDT, autolyse, mix type, and loss percentages.`)) {
-        return
-      }
+      const ok = await showConfirm(`Apply ${DOUGH_TYPE_LABELS[newType]} defaults? This will update DDT, autolyse, mix type, and loss percentages.`)
+      if (!ok) return
     }
 
     if (defaults.ddt != null) ddt = defaults.ddt
@@ -320,15 +358,24 @@
 
   let recipeReady = $derived(
     calculated &&
-    ingredients.some((i) => i.category === 'FLOUR' && i.base_qty > 0) &&
-    ingredients.some((i) => i.category === 'LIQUID' && i.base_qty > 0)
+    ingredients.some((i) => i.category === baseIngredientCategory && i.base_qty > 0)
   )
 
   let ingTotal = $derived(ingredients.reduce((s, i) => s + (i.base_qty || 0), 0))
 
-  let ingBpTotal = $derived(
-    calculated?.ingredients?.reduce((s, i) => s + (i.overall_bakers_pct || 0), 0) ?? 0
-  )
+  let ingBpTotal = $derived.by(() => {
+    if (!calculated?.ingredients) return 0
+    let total = 0
+    for (const ci of calculated.ingredients) {
+      if (ci.category === 'PREFERMENT') {
+        const cpf = calculated.preferments?.find(p => p.id === ci.id)
+        total += cpf?.enabled ? (cpf.ratio || 0) : 0
+      } else {
+        total += ci.overall_bakers_pct || 0
+      }
+    }
+    return total
+  })
 
   let calcTotals = $derived.by(() => {
     if (!calculated?.ingredients?.length) return null
@@ -390,6 +437,7 @@
       yield_per_piece: yieldPerPiece,
       ddt,
       dough_type: doughType,
+      base_ingredient_category: baseIngredientCategory,
       process_loss_pct: processLossPct,
       bake_loss_pct: bakeLossPct,
       autolyse: autolyse ? 1 : 0,
@@ -415,12 +463,14 @@
         temperature: s.temperature,
         mixer_speed: s.mixer_speed,
         notes: s.notes,
+        preferment_ingredient_id: s.preferment_ingredient_id || null,
       })),
       companions: companions.map((c, idx) => ({
         companion_recipe_id: c.companion_recipe_id,
         role: c.role,
         sort_order: idx,
         notes: c.notes,
+        qty: c.qty || 0,
       })),
     }
   }
@@ -436,6 +486,7 @@
     yieldPerPiece = s.yield_per_piece
     ddt = s.ddt
     doughType = s.dough_type || null
+    baseIngredientCategory = s.base_ingredient_category || 'FLOUR'
     processLossPct = s.process_loss_pct || 0
     bakeLossPct = s.bake_loss_pct || 0
     autolyse = !!s.autolyse
@@ -782,8 +833,47 @@
   }
 
   function resuggestSteps() {
-    processSteps.length = 0
+    // Only clear main steps (keep PF steps)
+    for (let i = processSteps.length - 1; i >= 0; i--) {
+      if (!processSteps[i].preferment_ingredient_id) processSteps.splice(i, 1)
+    }
     suggestSteps()
+  }
+
+  function getMainSteps() {
+    return processSteps.filter((s) => !s.preferment_ingredient_id)
+  }
+
+  function getPfSteps(pfId) {
+    return processSteps.filter((s) => s.preferment_ingredient_id === pfId)
+  }
+
+  function suggestPfSteps(pfIng) {
+    const settings = pfIng.preferment_settings || { type: 'CUSTOM' }
+    const steps = suggestPfProcessSteps(settings.type, pfIng.name, pfIng.id)
+    for (const s of steps) {
+      processSteps.push({ ...s, sort_order: processSteps.length })
+    }
+  }
+
+  function addPfStep(pfIngId) {
+    processSteps.push({
+      id: generateId(),
+      stage: 'PF_MIX',
+      sort_order: processSteps.length,
+      title: '',
+      description: '',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+      notes: null,
+      preferment_ingredient_id: pfIngId,
+    })
+  }
+
+  function removePfStep(stepId) {
+    const idx = processSteps.findIndex((s) => s.id === stepId)
+    if (idx >= 0) processSteps.splice(idx, 1)
   }
 
   // ── Autolyse Split Drag ──────────────────────────────────────
@@ -1057,6 +1147,7 @@
               if (result.data?.recipe) data.recipe.version = result.data.recipe.version
               if (result.data?.versionCount !== undefined) data.versionCount = result.data.versionCount
               if (result.data?.ingredientLibrary) ingredientLibrary = result.data.ingredientLibrary
+              if (result.data?.companionDetails) data.companionDetails = result.data.companionDetails
               changeNotes = ''
               savedSnapshot = JSON.stringify(buildRecipeData())
             } else {
@@ -1112,22 +1203,27 @@
           />
         </div>
         <div class="w-48">
-          <label for="dough-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">Dough Type</label>
-          <select
-            id="dough-type"
+          <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Dough Type</span>
+          <SelectRoot
+            type="single"
             value={doughType || ''}
-            onchange={(e) => onDoughTypeChange(e.target.value || null)}
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+            onValueChange={(v) => onDoughTypeChange(v || null)}
+            items={Object.values(DOUGH_TYPE_GROUPS).flat().map((t) => ({ value: t, label: DOUGH_TYPE_LABELS[t] }))}
           >
-            <option value="">— Select —</option>
-            {#each Object.entries(DOUGH_TYPE_GROUPS) as [group, types]}
-              <optgroup label={group}>
-                {#each types as t}
-                  <option value={t}>{DOUGH_TYPE_LABELS[t]}</option>
-                {/each}
-              </optgroup>
-            {/each}
-          </select>
+            <SelectTrigger>
+              <span>{doughType ? DOUGH_TYPE_LABELS[doughType] : '— Select —'}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {#each Object.entries(DOUGH_TYPE_GROUPS) as [group, types]}
+                <SelectGroup>
+                  <SelectGroupHeading class="px-2 py-1.5 text-xs font-semibold text-muted-foreground">{group}</SelectGroupHeading>
+                  {#each types as t}
+                    <SelectItem value={t} label={DOUGH_TYPE_LABELS[t]} />
+                  {/each}
+                </SelectGroup>
+              {/each}
+            </SelectContent>
+          </SelectRoot>
           {#if doughTypeSuggestion}
             <p class="mt-1 text-xs text-muted-foreground">
               Looks like {DOUGH_TYPE_LABELS[doughTypeSuggestion.type]} —
@@ -1169,6 +1265,30 @@
     </CardHeader>
 
     <CardContent class="space-y-4">
+      {#if ingredients.length > 0 && (!hasBaseIngredient || baseIngredientCategory !== 'FLOUR')}
+        <div class="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+          {#if !hasBaseIngredient}
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <span class="text-xs text-amber-800">No {baseIngredientCategory} ingredients found. Baker's % cannot be computed.</span>
+          {/if}
+          <label class="flex items-center gap-1.5 text-xs font-medium text-amber-800">
+            Base for BP:
+            <select
+              value={baseIngredientCategory}
+              onchange={(e) => {
+                baseIngredientCategory = e.target.value
+                scheduleCalc()
+              }}
+              class="rounded border border-amber-300 bg-white px-2 py-0.5 text-xs outline-none"
+            >
+              {#each presentCategories.length > 0 ? presentCategories : CATEGORIES.filter((c) => c !== 'PREFERMENT') as cat}
+                <option value={cat}>{cat}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
+
       {#if recipeReady}
         <!-- Loss & Waste + Autolyse -->
         <div class="flex flex-wrap items-end gap-4">
@@ -1378,7 +1498,12 @@
                   </SelectRoot>
                 </td>
                 <td class="px-4 py-2 text-right tabular-nums text-muted-foreground">
-                  {calc ? formatPct(calc.overall_bakers_pct) : '-'}
+                  {#if ing.category === 'PREFERMENT'}
+                    {@const cpf = getCalcPf(ing.id)}
+                    {cpf?.enabled ? formatPct(cpf.ratio) : '-'}
+                  {:else}
+                    {calc ? formatPct(calc.overall_bakers_pct) : '-'}
+                  {/if}
                 </td>
                 <td class="px-4 py-2">
                   <span class="opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1458,6 +1583,7 @@
                   </td>
                 </tr>
               {/if}
+
             {/each}
           </tbody>
           <tfoot>
@@ -1481,7 +1607,7 @@
       <CardHeader class="pb-0">
         <CardTitle class="flex items-center gap-2">
           {@render sectionIcon('M3 3v18h18 M18.7 8l-5.1 5.2-2.8-2.7L7 14.3')}
-          Calculated Results
+          Total Formula
         </CardTitle>
       </CardHeader>
       <CardContent class="p-0 pt-4">
@@ -1669,6 +1795,99 @@
             </div>
           </CardFooter>
         {/if}
+
+        <!-- PF Process Steps -->
+        {@const pfSteps = getPfSteps(pfIng.id)}
+        <div class="border-t border-border px-6 py-4">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Build Steps</h4>
+            {#if data.canEdit}
+              <div class="flex gap-2">
+                {#if pfSteps.length === 0}
+                  <Button variant="outline" size="sm" onclick={() => suggestPfSteps(pfIng)} class="h-6 text-[10px] border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+                    Suggest Steps
+                  </Button>
+                {/if}
+                <Button variant="ghost" size="sm" onclick={() => addPfStep(pfIng.id)} class="h-6 text-[10px]">
+                  + Step
+                </Button>
+              </div>
+            {/if}
+          </div>
+          {#if pfSteps.length === 0}
+            <p class="text-xs text-muted-foreground">No build steps yet.</p>
+          {:else}
+            <div class="space-y-2">
+              {#each pfSteps as pfStep (pfStep.id)}
+                <div class="group flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
+                  <div class="flex-1 space-y-1.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      {#if data.canEdit}
+                        <select
+                          value={pfStep.stage}
+                          onchange={(e) => { pfStep.stage = e.target.value }}
+                          class="h-6 rounded border border-input bg-background px-1.5 text-[10px] font-medium outline-none"
+                        >
+                          {#each ['PF_MIX', 'PF_FEED', 'PF_FERMENT'] as stage}
+                            <option value={stage}>{stage.replace(/_/g, ' ')}</option>
+                          {/each}
+                        </select>
+                        <input
+                          type="text"
+                          bind:value={pfStep.title}
+                          placeholder="Step title"
+                          class="flex-1 min-w-32 rounded border border-input bg-background px-2 py-0.5 text-xs outline-none"
+                        />
+                      {:else}
+                        <Badge variant="outline" class="text-[10px] font-normal">{pfStep.stage.replace(/_/g, ' ')}</Badge>
+                        <span class="text-xs font-medium">{pfStep.title}</span>
+                      {/if}
+                    </div>
+                    {#if data.canEdit}
+                      <textarea
+                        bind:value={pfStep.description}
+                        placeholder="Description..."
+                        rows="1"
+                        class="w-full rounded border border-input bg-background px-2 py-0.5 text-xs outline-none"
+                      ></textarea>
+                    {:else if pfStep.description}
+                      <p class="text-xs text-muted-foreground">{pfStep.description}</p>
+                    {/if}
+                    <div class="flex flex-wrap gap-2">
+                      {#if data.canEdit}
+                        <div class="w-20">
+                          <label class="block text-[9px] text-muted-foreground">Duration</label>
+                          <input type="number" step="1" min="0" bind:value={pfStep.duration_min} class="w-full rounded border border-input bg-background px-1.5 py-0.5 text-[10px] tabular-nums outline-none" />
+                        </div>
+                        <div class="w-16">
+                          <label class="block text-[9px] text-muted-foreground">Temp</label>
+                          <input type="number" step="0.5" bind:value={pfStep.temperature} class="w-full rounded border border-input bg-background px-1.5 py-0.5 text-[10px] tabular-nums outline-none" />
+                        </div>
+                      {:else}
+                        {#if pfStep.duration_min}
+                          <Badge variant="secondary" class="text-[9px] font-normal tabular-nums">{pfStep.duration_min} min</Badge>
+                        {/if}
+                        {#if pfStep.temperature}
+                          <Badge variant="secondary" class="text-[9px] font-normal tabular-nums">{pfStep.temperature}&deg;C</Badge>
+                        {/if}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if data.canEdit}
+                    <button
+                      type="button"
+                      onclick={() => removePfStep(pfStep.id)}
+                      class="mt-1 rounded p-0.5 text-muted-foreground/50 transition-colors hover:text-destructive opacity-0 group-hover:opacity-100"
+                      title="Remove step"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </Card>
     {/each}
 
@@ -1762,7 +1981,7 @@
         Process Steps
       </CardTitle>
       <div class="flex gap-2">
-        {#if processSteps.length === 0}
+        {#if getMainSteps().length === 0}
           <Button variant="outline" size="sm" onclick={suggestSteps} class="border-teal-300 text-teal-700 hover:bg-teal-50">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83"/></svg>
             Suggest Mixing Steps
@@ -1780,7 +1999,7 @@
       </div>
     </CardHeader>
 
-    {#if processSteps.length === 0}
+    {#if getMainSteps().length === 0}
       <CardContent class="pt-0">
         <div class="flex flex-col items-center rounded-lg border border-dashed border-border py-8 text-center">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2 text-muted-foreground/50"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838.838-2.872a2 2 0 0 1 .506-.854z"/></svg>
@@ -1791,7 +2010,7 @@
     {:else}
       <CardContent class="p-0">
         <div class="divide-y divide-border" bind:this={stepsContainer}>
-          {#each processSteps as step, idx (step.id)}
+          {#each getMainSteps() as step, idx (step.id)}
             <div class="group px-6 py-4 transition-colors hover:bg-muted/20">
               <div class="flex items-start gap-3">
                 <!-- Drag handle -->
@@ -1878,7 +2097,10 @@
 
                 <!-- Remove -->
                 <span class="opacity-0 group-hover:opacity-100 transition-opacity">
-                  {@render removeBtn(() => removeProcessStep(idx), 'Remove step')}
+                  {@render removeBtn(() => {
+                    const realIdx = processSteps.findIndex((s) => s.id === step.id)
+                    if (realIdx >= 0) removeProcessStep(realIdx)
+                  }, 'Remove step')}
                 </span>
               </div>
             </div>
@@ -1914,45 +2136,76 @@
       <CardContent class="p-0">
         <div class="divide-y divide-border">
           {#each companions as comp, idx}
-            <div class="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/20">
-              <div class="flex-1 min-w-0">
-                <a
-                  href="/recipes/{comp.companion_recipe_id}"
-                  class="text-sm font-medium text-foreground hover:underline"
-                >
-                  {comp.companion_name}
-                </a>
-                {#if comp.companion_dough_type}
-                  <span class="ml-2 text-xs text-muted-foreground">
-                    {comp.companion_dough_type}
+            <div class="group px-6 py-3 transition-colors hover:bg-muted/20">
+              <div class="flex items-center gap-3">
+                <div class="flex-1 min-w-0">
+                  <a
+                    href="/recipes/{comp.companion_recipe_id}"
+                    class="text-sm font-medium text-foreground hover:underline"
+                  >
+                    {comp.companion_name}
+                  </a>
+                  {#if comp.companion_dough_type}
+                    <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">{DOUGH_TYPE_LABELS[comp.companion_dough_type] || comp.companion_dough_type}</Badge>
+                  {/if}
+                </div>
+
+                {#if data.canEdit}
+                  <div class="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      bind:value={comp.qty}
+                      oninput={() => onFieldChange()}
+                      onblur={() => { comp.qty = round2(comp.qty) }}
+                      placeholder="0"
+                      class="w-20 rounded-md border border-input bg-background px-2 py-1 text-xs text-right tabular-nums outline-none ring-ring transition-shadow focus:ring-1"
+                    />
+                    <span class="text-[10px] text-muted-foreground">g</span>
+                  </div>
+                  <select
+                    value={comp.role}
+                    onchange={(e) => { comp.role = e.target.value }}
+                    class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+                  >
+                    {#each COMPANION_ROLES as role}
+                      <option value={role}>{role}</option>
+                    {/each}
+                  </select>
+                  <input
+                    type="text"
+                    bind:value={comp.notes}
+                    placeholder="Notes..."
+                    class="w-32 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
+                  />
+                  <span class="opacity-0 group-hover:opacity-100 transition-opacity">
+                    {@render removeBtn(() => removeCompanion(idx), 'Remove companion')}
                   </span>
+                {:else}
+                  {#if comp.qty}
+                    <span class="text-xs font-medium tabular-nums">{formatGrams(comp.qty)}</span>
+                  {/if}
+                  <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
+                  {#if comp.notes}
+                    <span class="text-xs text-muted-foreground">{comp.notes}</span>
+                  {/if}
                 {/if}
               </div>
 
-              {#if data.canEdit}
-                <select
-                  value={comp.role}
-                  onchange={(e) => { comp.role = e.target.value }}
-                  class="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
-                >
-                  {#each COMPANION_ROLES as role}
-                    <option value={role}>{role}</option>
+              <!-- Companion ingredient summary -->
+              {#if data.companionDetails?.[comp.companion_recipe_id]?.calculated}
+                {@const detail = data.companionDetails[comp.companion_recipe_id]}
+                <div class="mt-2 ml-0.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {#each detail.calculated.ingredients as ing}
+                    <span>
+                      <span class="font-medium text-foreground/70">{ing.name}</span>
+                      <span class="tabular-nums">{formatGrams(ing.base_qty)}</span>
+                      <span class="text-muted-foreground/50">({(ing.overall_bakers_pct * 100).toFixed(0)}%)</span>
+                    </span>
                   {/each}
-                </select>
-                <input
-                  type="text"
-                  bind:value={comp.notes}
-                  placeholder="Notes..."
-                  class="w-32 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none ring-ring transition-shadow focus:ring-1"
-                />
-                <span class="opacity-0 group-hover:opacity-100 transition-opacity">
-                  {@render removeBtn(() => removeCompanion(idx), 'Remove companion')}
-                </span>
-              {:else}
-                <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
-                {#if comp.notes}
-                  <span class="text-xs text-muted-foreground">{comp.notes}</span>
-                {/if}
+                  <span class="font-medium">= {formatGrams(detail.calculated.totals.total_weight)}</span>
+                </div>
               {/if}
             </div>
           {/each}
@@ -1981,4 +2234,16 @@
   </Card>
   {/if}
 </div>
+
+<!-- Confirm Dialog -->
+<DialogRoot bind:open={confirmOpen} onOpenChange={(o) => { if (!o) onConfirmResult(false) }}>
+  <DialogContent>
+    <DialogTitle>Confirm</DialogTitle>
+    <DialogDescription>{confirmMessage}</DialogDescription>
+    <div class="flex justify-end gap-2 pt-2">
+      <Button variant="outline" onclick={() => onConfirmResult(false)}>Cancel</Button>
+      <Button onclick={() => onConfirmResult(true)}>Apply</Button>
+    </div>
+  </DialogContent>
+</DialogRoot>
 

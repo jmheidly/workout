@@ -5,3 +5,5 @@ export { default as SelectContent } from './select-content.svelte'
 export { default as SelectItem } from './select-item.svelte'
 
 export const SelectRoot = SelectPrimitive.Root
+export const SelectGroup = SelectPrimitive.Group
+export const SelectGroupHeading = SelectPrimitive.GroupHeading

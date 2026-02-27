@@ -3,11 +3,18 @@
  * Shared module — used client-side for stage constants and step suggestions.
  */
 
-import { MIXING_PHASES, classifyAllIngredients, groupByPhase } from './mixing-phases.js'
+import {
+  MIXING_PHASES,
+  classifyAllIngredients,
+  groupByPhase,
+} from './mixing-phases.js'
 import { MIX_TYPES } from './mixing.js'
 
 export const PROCESS_STAGES = [
   'PREFERMENT_BUILD',
+  'PF_MIX',
+  'PF_FEED',
+  'PF_FERMENT',
   'AUTOLYSE',
   'FERMENTOLYSE',
   'MIXING',
@@ -90,6 +97,10 @@ const SPECIALIZED_TYPES = new Set([
   'SHORTCRUST',
   'SWEET_PASTRY',
   'PASTA',
+  'TOPPING',
+  'GLAZE',
+  'FILLING',
+  'SAUCE',
 ])
 
 /**
@@ -132,7 +143,8 @@ export function suggestProcessSteps({
       else if (target === 'final') {
         // Move to INCORPORATION unless already in FAT_ADDITION or MIXIN
         const cur = phaseMap.get(id)
-        if (cur === MIXING_PHASES.AUTOLYSE) phaseMap.set(id, MIXING_PHASES.INCORPORATION)
+        if (cur === MIXING_PHASES.AUTOLYSE)
+          phaseMap.set(id, MIXING_PHASES.INCORPORATION)
       }
     }
   }
@@ -206,7 +218,9 @@ export function suggestProcessSteps({
     steps.push({
       stage: 'MIXING',
       title: 'Final Mix \u2014 Incorporation',
-      description: `Add ${incorpNames}. Mix on 1st speed until incorporated, ${hasSecond ? developmentTail : developmentTailShort}`,
+      description: `Add ${incorpNames}. Mix on 1st speed until incorporated, ${
+        hasSecond ? developmentTail : developmentTailShort
+      }`,
       duration_min: null,
       temperature: null,
       mixer_speed: incorpSpeed,
@@ -218,7 +232,9 @@ export function suggestProcessSteps({
     steps.push({
       stage: 'MIXING',
       title: 'Initial Mix',
-      description: `Combine ${initialNames} on 1st speed until incorporated, ${hasSecond ? developmentTail : developmentTailShort}`,
+      description: `Combine ${initialNames} on 1st speed until incorporated, ${
+        hasSecond ? developmentTail : developmentTailShort
+      }`,
       duration_min: null,
       temperature: null,
       mixer_speed: incorpSpeed,
@@ -244,7 +260,11 @@ export function suggestProcessSteps({
     steps.push({
       stage: 'MIXING',
       title: 'Fat & Sugar Addition',
-      description: `Add ${fatNames} in stages on 1st speed. ${hasSecond ? 'Return to 2nd speed after each addition and mix until smooth.' : 'Mix on 1st speed after each addition until smooth.'}`,
+      description: `Add ${fatNames} in stages on 1st speed. ${
+        hasSecond
+          ? 'Return to 2nd speed after each addition and mix until smooth.'
+          : 'Mix on 1st speed after each addition until smooth.'
+      }`,
       duration_min: null,
       temperature: null,
       mixer_speed: fatSpeed,
@@ -270,7 +290,9 @@ export function suggestProcessSteps({
   const totalFolds = proc.folds + 1 // N fold actions + 1 final rest = N+1 steps
   const remainder = proc.bulk_min - proc.folds * proc.fold_interval_min
   const lastPhaseMin = remainder > 0 ? remainder : proc.fold_interval_min
-  const enrichedNote = isEnriched ? ' Monitor volume rather than strict timing.' : ''
+  const enrichedNote = isEnriched
+    ? ' Monitor volume rather than strict timing.'
+    : ''
 
   for (let i = 1; i <= totalFolds; i++) {
     const isLast = i === totalFolds
@@ -294,7 +316,8 @@ export function suggestProcessSteps({
       {
         stage: 'PRESHAPE',
         title: 'Ball',
-        description: 'Divide and ball. Tuck edges under to build surface tension.',
+        description:
+          'Divide and ball. Tuck edges under to build surface tension.',
         duration_min: null,
         temperature: null,
         mixer_speed: null,
@@ -343,7 +366,8 @@ export function suggestProcessSteps({
       {
         stage: 'REST',
         title: 'Bench Rest',
-        description: 'Rest on bench, covered. Gluten relaxes for rolling/stretching.',
+        description:
+          'Rest on bench, covered. Gluten relaxes for rolling/stretching.',
         duration_min: proc.bench_rest_min,
         temperature: null,
         mixer_speed: null,
@@ -394,7 +418,8 @@ export function suggestProcessSteps({
   steps.push({
     stage: 'REST',
     title: 'Bench Rest',
-    description: 'Rest on bench, seam side down. Gluten relaxes for final shaping.',
+    description:
+      'Rest on bench, seam side down. Gluten relaxes for final shaping.',
     duration_min: proc.bench_rest_min,
     temperature: null,
     mixer_speed: null,
@@ -471,13 +496,19 @@ function generateSpecializedSteps(doughType, { ingredients, ddt }) {
     SHORTCRUST: generateShortcrust,
     SWEET_PASTRY: generateSweetPastry,
     PASTA: generatePasta,
+    TOPPING: generateTopping,
+    GLAZE: generateGlaze,
+    FILLING: generateFilling,
+    SAUCE: generateSauce,
   }
   const gen = generators[doughType]
   return gen ? gen({ ingredients, ddt }) : []
 }
 
 function generateLaminatedYeasted({ ingredients, ddt }) {
-  const allNames = nameList(ingredients.filter((i) => i.category !== 'PREFERMENT'))
+  const allNames = nameList(
+    ingredients.filter((i) => i.category !== 'PREFERMENT')
+  )
   return [
     {
       stage: 'MIXING',
@@ -548,7 +579,8 @@ function generateLaminatedYeasted({ ingredients, ddt }) {
     {
       stage: 'RETARD',
       title: 'Final Retard',
-      description: 'Wrap and refrigerate for at least 2 hours, preferably overnight.',
+      description:
+        'Wrap and refrigerate for at least 2 hours, preferably overnight.',
       duration_min: 120,
       temperature: 4,
       mixer_speed: null,
@@ -556,7 +588,8 @@ function generateLaminatedYeasted({ ingredients, ddt }) {
     {
       stage: 'SHAPE',
       title: 'Sheet & Cut',
-      description: 'Roll to 4mm thickness. Cut triangles (croissant) or squares (danish).',
+      description:
+        'Roll to 4mm thickness. Cut triangles (croissant) or squares (danish).',
       duration_min: null,
       temperature: null,
       mixer_speed: null,
@@ -596,7 +629,8 @@ function generateLaminatedPuff({ ingredients }) {
     {
       stage: 'REST',
       title: 'Rest',
-      description: 'Wrap and rest at room temperature. Gluten relaxes for sheeting.',
+      description:
+        'Wrap and rest at room temperature. Gluten relaxes for sheeting.',
       duration_min: 60,
       temperature: null,
       mixer_speed: null,
@@ -774,7 +808,9 @@ function generateCookie({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Cream Butter & Sugar',
-      description: `Cream ${nameList(fatIngs)} on medium speed (paddle) for 5 min until light and fluffy.`,
+      description: `Cream ${nameList(
+        fatIngs
+      )} on medium speed (paddle) for 5 min until light and fluffy.`,
       duration_min: 5,
       temperature: null,
       mixer_speed: '2nd',
@@ -782,7 +818,8 @@ function generateCookie({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Add Eggs',
-      description: 'Add eggs one at a time, mixing until just incorporated after each.',
+      description:
+        'Add eggs one at a time, mixing until just incorporated after each.',
       duration_min: null,
       temperature: null,
       mixer_speed: '1st',
@@ -790,7 +827,9 @@ function generateCookie({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Add Dry Ingredients',
-      description: `Add ${nameList(dryIngs)} on low speed. Mix until just combined \u2014 do not overmix.`,
+      description: `Add ${nameList(
+        dryIngs
+      )} on low speed. Mix until just combined \u2014 do not overmix.`,
       duration_min: null,
       temperature: null,
       mixer_speed: '1st',
@@ -800,7 +839,9 @@ function generateCookie({ ingredients }) {
           {
             stage: 'MIXING',
             title: 'Fold in Mix-ins',
-            description: `Fold in ${nameList(mixinIngs)} by hand or on lowest speed.`,
+            description: `Fold in ${nameList(
+              mixinIngs
+            )} by hand or on lowest speed.`,
             duration_min: null,
             temperature: null,
             mixer_speed: '1st',
@@ -810,7 +851,8 @@ function generateCookie({ ingredients }) {
     {
       stage: 'SHAPE',
       title: 'Portion',
-      description: 'Scoop or pipe onto parchment-lined sheets at desired weight.',
+      description:
+        'Scoop or pipe onto parchment-lined sheets at desired weight.',
       duration_min: null,
       temperature: null,
       mixer_speed: null,
@@ -854,7 +896,9 @@ function generateShortcrust({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Sablage',
-      description: `Rub ${nameList(fatIngs)} into ${nameList(flourIngs)} by hand or pulse in food processor until pea-sized crumbs.`,
+      description: `Rub ${nameList(fatIngs)} into ${nameList(
+        flourIngs
+      )} by hand or pulse in food processor until pea-sized crumbs.`,
       duration_min: null,
       temperature: null,
       mixer_speed: null,
@@ -862,7 +906,9 @@ function generateShortcrust({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Add Liquid',
-      description: `Add ${nameList(liquidIngs.length > 0 ? liquidIngs : [{ name: 'cold water' }])}. Mix until dough just comes together. Do not knead.`,
+      description: `Add ${nameList(
+        liquidIngs.length > 0 ? liquidIngs : [{ name: 'cold water' }]
+      )}. Mix until dough just comes together. Do not knead.`,
       duration_min: null,
       temperature: null,
       mixer_speed: null,
@@ -879,7 +925,8 @@ function generateShortcrust({ ingredients }) {
     {
       stage: 'RETARD',
       title: 'Chill',
-      description: 'Wrap in plastic and refrigerate. Gluten relaxes, fat re-firms.',
+      description:
+        'Wrap in plastic and refrigerate. Gluten relaxes, fat re-firms.',
       duration_min: 60,
       temperature: 4,
       mixer_speed: null,
@@ -924,7 +971,9 @@ function generateSweetPastry({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Cream Butter & Sugar',
-      description: `Cream ${nameList(fatIngs)} on medium speed (paddle) until smooth and pale. Do not aerate excessively.`,
+      description: `Cream ${nameList(
+        fatIngs
+      )} on medium speed (paddle) until smooth and pale. Do not aerate excessively.`,
       duration_min: null,
       temperature: null,
       mixer_speed: '2nd',
@@ -940,7 +989,9 @@ function generateSweetPastry({ ingredients }) {
     {
       stage: 'MIXING',
       title: 'Add Flour',
-      description: `Add ${nameList(flourIngs)} on low speed. Mix until dough just comes together \u2014 minimal mixing prevents toughness.`,
+      description: `Add ${nameList(
+        flourIngs
+      )} on low speed. Mix until dough just comes together \u2014 minimal mixing prevents toughness.`,
       duration_min: null,
       temperature: null,
       mixer_speed: '1st',
@@ -1031,6 +1082,417 @@ function generatePasta({ ingredients }) {
       mixer_speed: null,
     },
   ]
+}
+
+// ── Component Template Generators ────────────────────────────────────
+
+function generateTopping({ ingredients }) {
+  const fatIngs = ingredients.filter((i) => i.category === 'ENRICHMENT')
+  const dryIngs = ingredients.filter(
+    (i) =>
+      i.category !== 'ENRICHMENT' &&
+      i.category !== 'LIQUID' &&
+      i.category !== 'PREFERMENT'
+  )
+  const liquidIngs = ingredients.filter((i) => i.category === 'LIQUID')
+  const hasFat = fatIngs.length > 0
+  const hasLiquid = liquidIngs.length > 0
+
+  const steps = []
+
+  if (hasFat) {
+    steps.push({
+      stage: 'MIXING',
+      title: 'Melt Fat',
+      description: `Melt ${nameList(fatIngs)} gently. Do not overheat — just until liquid.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  }
+
+  if (dryIngs.length > 0) {
+    steps.push({
+      stage: 'MIXING',
+      title: 'Combine Dry',
+      description: `Combine ${nameList(dryIngs)}. Mix until evenly distributed.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  }
+
+  if (hasFat || hasLiquid) {
+    const wetNames = nameList([...fatIngs, ...liquidIngs])
+    steps.push({
+      stage: 'MIXING',
+      title: 'Mix Wet into Dry',
+      description: `Add ${wetNames} to dry ingredients. Stir until uniform — do not overmix.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  }
+
+  steps.push({
+    stage: 'FINISH',
+    title: 'Store',
+    description:
+      'Transfer to airtight container. Use immediately or store at room temperature.',
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  return steps
+}
+
+function generateGlaze({ ingredients }) {
+  const liquidIngs = ingredients.filter((i) => i.category === 'LIQUID')
+  const fatIngs = ingredients.filter((i) => i.category === 'ENRICHMENT')
+  const dryIngs = ingredients.filter(
+    (i) =>
+      i.category !== 'LIQUID' &&
+      i.category !== 'ENRICHMENT' &&
+      i.category !== 'PREFERMENT'
+  )
+  const hasLiquid = liquidIngs.length > 0
+  const hasFat = fatIngs.length > 0
+  const allNames = nameList(ingredients)
+
+  const steps = []
+
+  if (hasLiquid || hasFat) {
+    steps.push({
+      stage: 'MIXING',
+      title: 'Heat Liquid',
+      description: `Heat ${nameList([...liquidIngs, ...fatIngs])} until warm and combined. Do not boil.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  }
+
+  steps.push({
+    stage: 'MIXING',
+    title: 'Combine',
+    description: hasLiquid || hasFat
+      ? `Add ${nameList(dryIngs)} to warm liquid. Whisk until smooth and lump-free.`
+      : `Combine ${allNames}. Whisk until smooth.`,
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  steps.push({
+    stage: 'COOL',
+    title: 'Cool to Working Temperature',
+    description:
+      'Cool glaze until it coats the back of a spoon. Too hot = runs off; too cool = sets unevenly.',
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  steps.push({
+    stage: 'FINISH',
+    title: 'Apply',
+    description:
+      'Pour or brush over product. Work quickly — glaze sets as it cools. Allow to set completely before handling.',
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  return steps
+}
+
+function generateFilling({ ingredients }) {
+  const liquidIngs = ingredients.filter((i) => i.category === 'LIQUID')
+  const fatIngs = ingredients.filter((i) => i.category === 'ENRICHMENT')
+  const dryIngs = ingredients.filter(
+    (i) =>
+      i.category !== 'LIQUID' &&
+      i.category !== 'ENRICHMENT' &&
+      i.category !== 'PREFERMENT'
+  )
+  const allNames = nameList(ingredients)
+
+  return [
+    {
+      stage: 'MIXING',
+      title: 'Combine Dry',
+      description: dryIngs.length > 0
+        ? `Whisk ${nameList(dryIngs)} together to prevent lumps.`
+        : `Prepare ${allNames}.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'MIXING',
+      title: 'Cook',
+      description: liquidIngs.length > 0
+        ? `Heat ${nameList(liquidIngs)}${fatIngs.length ? ' and ' + nameList(fatIngs) : ''} in a saucepan. Gradually whisk in dry ingredients. Cook over medium heat, stirring constantly, until thickened.`
+        : `Combine all ingredients in a saucepan. Cook over medium heat, stirring constantly, until thickened.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'COOL',
+      title: 'Cool',
+      description:
+        'Transfer to a clean container. Press plastic wrap directly on surface to prevent skin. Cool rapidly — ice bath if large batch.',
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    },
+    {
+      stage: 'FINISH',
+      title: 'Store',
+      description:
+        'Refrigerate until use. Whisk briefly before using to restore smooth consistency.',
+      duration_min: null,
+      temperature: 4,
+      mixer_speed: null,
+    },
+  ]
+}
+
+function generateSauce({ ingredients }) {
+  const allNames = nameList(ingredients)
+  const sweetIngs = ingredients.filter((i) => i.category === 'SWEETENER')
+  const liquidIngs = ingredients.filter((i) => i.category === 'LIQUID')
+  const hasSugar = sweetIngs.length > 0
+
+  const steps = []
+
+  if (hasSugar && liquidIngs.length > 0) {
+    steps.push({
+      stage: 'MIXING',
+      title: 'Cook Sugar',
+      description: `Heat ${nameList(sweetIngs)} in a heavy saucepan over medium heat. Do not stir — swirl pan gently. Cook until desired color.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+    steps.push({
+      stage: 'MIXING',
+      title: 'Add Liquid',
+      description: `Carefully add ${nameList(liquidIngs)} — mixture will bubble vigorously. Stir until smooth.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  } else {
+    steps.push({
+      stage: 'MIXING',
+      title: 'Combine & Cook',
+      description: `Combine ${allNames} in a saucepan. Cook over medium heat, stirring frequently.`,
+      duration_min: null,
+      temperature: null,
+      mixer_speed: null,
+    })
+  }
+
+  steps.push({
+    stage: 'MIXING',
+    title: 'Reduce',
+    description:
+      'Simmer until sauce reaches desired consistency. It will thicken further as it cools.',
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  steps.push({
+    stage: 'COOL',
+    title: 'Cool',
+    description: 'Cool to room temperature. Transfer to airtight container.',
+    duration_min: null,
+    temperature: null,
+    mixer_speed: null,
+  })
+
+  steps.push({
+    stage: 'FINISH',
+    title: 'Store',
+    description: 'Refrigerate. Reheat gently before use — do not boil.',
+    duration_min: null,
+    temperature: 4,
+    mixer_speed: null,
+  })
+
+  return steps
+}
+
+// ── Per-PF Process Step Suggestions ─────────────────────────────────
+
+/**
+ * Suggest process steps for a pre-ferment build.
+ *
+ * @param {string} pfType - PF type key (POOLISH, BIGA, LEVAIN, etc.)
+ * @param {string} pfName - display name of the PF ingredient
+ * @param {string} pfIngredientId - ingredient ID to attach steps to
+ * @returns {Array<{ id: string, stage: string, title: string, description: string, duration_min: number|null, temperature: number|null, mixer_speed: string|null, notes: string|null, preferment_ingredient_id: string }>}
+ */
+export function suggestPfProcessSteps(pfType, pfName, pfIngredientId) {
+  const base = {
+    mixer_speed: null,
+    notes: null,
+    preferment_ingredient_id: pfIngredientId,
+  }
+  const id = () =>
+    crypto.randomUUID?.() || Math.random().toString(36).slice(2, 10)
+
+  switch (pfType) {
+    case 'POOLISH':
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description:
+            'Combine flour, water, and yeast. Stir until smooth — no lumps.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description:
+            'Cover and ferment at room temperature. Ready when surface is bubbly and slightly domed.',
+          duration_min: 840,
+          temperature: 21,
+        },
+      ]
+    case 'BIGA':
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description:
+            'Combine flour, water, and yeast. Mix until shaggy — biga is stiff, do not overdevelop.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description:
+            'Cover and ferment at cool room temperature. Ready when doubled and slightly domed.',
+          duration_min: 840,
+          temperature: 18,
+        },
+      ]
+    case 'LEVAIN':
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description:
+            'Combine starter, flour, and water. Mix until incorporated.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FEED',
+          title: `Feed ${pfName}`,
+          description:
+            'Feed every 4 hours if building over multiple stages. Maintain at 29\u00B0C for consistent activity.',
+          duration_min: 240,
+          temperature: 29,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description:
+            'Final fermentation at 29\u00B0C. Ready when doubled, domed, and passes float test.',
+          duration_min: 600,
+          temperature: 29,
+        },
+      ]
+    case 'PATE_FERMENTEE':
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description:
+            'Use reserved dough from previous batch, or mix flour, water, yeast, and salt to a smooth dough.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description:
+            'Ferment at room temperature then refrigerate. Use within 24 hours.',
+          duration_min: 150,
+          temperature: 21,
+        },
+      ]
+    case 'SPONGE':
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description: 'Combine flour, water, and yeast. Mix until smooth.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description:
+            'Cover and ferment at room temperature. Ready when bubbly and starting to recede.',
+          duration_min: 840,
+          temperature: 21,
+        },
+      ]
+    default: // CUSTOM
+      return [
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_MIX',
+          title: `Mix ${pfName}`,
+          description: 'Combine ingredients for the pre-ferment.',
+          duration_min: null,
+          temperature: null,
+        },
+        {
+          ...base,
+          id: id(),
+          stage: 'PF_FERMENT',
+          title: `Ferment ${pfName}`,
+          description: 'Ferment until ready.',
+          duration_min: null,
+          temperature: null,
+        },
+      ]
+  }
 }
 
 /** Join ingredient names into a comma-separated list. */

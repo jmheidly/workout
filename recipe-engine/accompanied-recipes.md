@@ -3,12 +3,20 @@
 > Comprehensive specification for adding accompanied recipe support to the Recipe Engine.
 > This document supplements the foundation spec (`recipemanagement.md`) and serves as the development guide for Claude Code implementation.
 
+## Implementation Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | **Done** | Non-PF companions (glazes, fillings, garnishes) with qty, BP%, versioning |
+| Phase 2 | **Done** | Per-PF process steps with `PF_MIX`/`PF_FEED`/`PF_FERMENT` stages |
+| Phase 3 | Planned | Reusable sub-recipe library |
+
 ## Table of Contents
 
 1. [Context & Motivation](#1-context--motivation)
 2. [Architecture Decision: §5 Stays, §16 Layers On Top](#2-architecture-decision-5-stays-16-layers-on-top)
-3. [Phase 1 — Non-PF Companions (Glazes, Fillings, Garnishes)](#3-phase-1--non-pf-companions)
-4. [Phase 2 — Per-Stage Process Modeling](#4-phase-2--per-stage-process-modeling)
+3. [Phase 1 — Non-PF Companions (Glazes, Fillings, Garnishes)](#3-phase-1--non-pf-companions) — **Implemented**
+4. [Phase 2 — Per-Stage Process Modeling](#4-phase-2--per-stage-process-modeling) — **Implemented**
 5. [Phase 3 — Reusable Sub-Recipe Library](#5-phase-3--reusable-sub-recipe-library)
 6. [Data Model Changes](#6-data-model-changes)
 7. [Calculation Engine Impact](#7-calculation-engine-impact)
@@ -26,17 +34,17 @@ Real-world bakery formulas are rarely a single recipe. A Pan d'Oro has 5 formula
 
 These "accompanied recipes" fall into three categories:
 
-| Category | Examples | Relationship to Main Dough |
-|---|---|---|
-| **Finishing components** | Sticky Bun Glaze, Hazelnut Glaze, flat icing, fondant, powdered sugar dust | Applied after baking. No calculation relationship to the dough formula. |
-| **Filling components** | Cinnamon Sugar, pastry cream, frangipane, almond paste | Incorporated during makeup. No calculation relationship to the dough formula. |
-| **Multi-stage dough builds** | Italian Levain → First Dough → Final Dough | PREFERMENT ingredients in the engine. §5 already handles the calculation chain. |
+| Category                     | Examples                                                                   | Relationship to Main Dough                                                      |
+| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **Finishing components**     | Sticky Bun Glaze, Hazelnut Glaze, flat icing, fondant, powdered sugar dust | Applied after baking. No calculation relationship to the dough formula.         |
+| **Filling components**       | Cinnamon Sugar, pastry cream, frangipane, almond paste                     | Incorporated during makeup. No calculation relationship to the dough formula.   |
+| **Multi-stage dough builds** | Italian Levain → First Dough → Final Dough                                 | PREFERMENT ingredients in the engine. §5 already handles the calculation chain. |
 
 The first two categories have no existing support. The third is already handled by §5's preferment system — but lacks richer process modeling (per-stage steps, parallel scheduling, reuse).
 
 ### Source Material
 
-All examples sourced from Suas, *Advanced Bread and Pastry*, Chapter 9: Viennoiserie.
+All examples sourced from Suas, _Advanced Bread and Pastry_, Chapter 9: Viennoiserie.
 
 ---
 
@@ -55,16 +63,17 @@ Multi-stage dough builds (Italian Levain, First Dough, Second Dough, etc.) are *
 
 ### What §5 Doesn't Handle
 
-| Gap | Description |
-|---|---|
-| **Non-PF companions** | Glazes, fillings, and garnishes don't contribute to total formula flour or hydration. They are separate preparations that need to be produced alongside the main recipe, scaled proportionally. |
+| Gap                         | Description                                                                                                                                                                                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Non-PF companions**       | Glazes, fillings, and garnishes don't contribute to total formula flour or hydration. They are separate preparations that need to be produced alongside the main recipe, scaled proportionally.                                                                      |
 | **Per-stage process steps** | §5 stores `preferment_settings` (type, DDT, fermentation duration) but doesn't model a full process sequence per preferment. An Italian Levain's "feed every 4 hours at 29°C" or a First Dough's "mix 1st speed only, ferment 2h at 29°C" need multi-step processes. |
-| **Production scheduling** | §9's timeline would need to walk the PF dependency DAG to find the critical path. First Dough and Second Dough can run in parallel, but Third Dough blocks on both. |
-| **Independent reuse** | PFs are currently embedded inline per recipe. The same Italian Levain formula used in both Panettone and Pan d'Oro is duplicated — there's no shared reference. |
+| **Production scheduling**   | §9's timeline would need to walk the PF dependency DAG to find the critical path. First Dough and Second Dough can run in parallel, but Third Dough blocks on both.                                                                                                  |
+| **Independent reuse**       | PFs are currently embedded inline per recipe. The same Italian Levain formula used in both Panettone and Pan d'Oro is duplicated — there's no shared reference.                                                                                                      |
 
 ### Decision
 
 **§5 stays for calculation.** §16 adds:
+
 - Phase 1: Non-PF companions (glazes, fillings)
 - Phase 2: Per-stage process modeling for PFs
 - Phase 3: Reusable sub-recipe library
@@ -73,197 +82,161 @@ Each phase is independently shippable.
 
 ---
 
-## 3. Phase 1 — Non-PF Companions
+## 3. Phase 1 — Non-PF Companions (Implemented)
 
 ### Goal
 
 Allow a recipe to link to companion preparations (glazes, fillings, garnishes) that are produced alongside the main dough but don't participate in the dough calculation (§4/§5).
 
-### Scope
+### What Was Built
 
-- Baker can create companion recipes linked to a parent recipe
-- Each companion has its own ingredients, baker's %, and process steps
-- Companions are normal recipes — same `recipes` table, same structure, same bakery scoping
-- Companions scale proportionally when the parent recipe's batch size changes
-- Companions appear in the recipe builder UI and on the production page
+- Baker links existing bakery recipes as companions with a role and qty (grams)
+- Companions are managed in the **Accompanied Recipes card** — separate from the Ingredients table, per BBGA convention (companions are not dough ingredients and don't participate in the dough formula's baker's percentages)
+- Each companion row has: name (linked), editable qty (grams), role selector, notes, remove button
+- The companion's internal formula is shown as an inline summary (ingredient names, qty, internal BP%, total weight)
+- The Ingredients table contains only dough ingredients — its totals reflect the dough formula only
+- On the production page, companion ingredient quantities are scaled proportionally based on the qty defined in the parent
+- Companion links are tracked in version snapshots; the versions comparison UI shows adds/removes/modifications
 
-### Data Model
-
-New table:
+### Data Model (as implemented)
 
 ```sql
 CREATE TABLE IF NOT EXISTS recipe_companions (
   id TEXT PRIMARY KEY,
-  parent_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
   companion_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'other',  -- 'filling', 'glaze', 'garnish', 'other'
-  scaling_ratio REAL NOT NULL DEFAULT 1.0,
-    -- companion_batch = parent_batch_pieces × scaling_ratio
-    -- e.g. glaze is 0.05 = 50g glaze per 1000g dough piece
   sort_order INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
-  UNIQUE(parent_recipe_id, companion_recipe_id)
+  qty REAL NOT NULL DEFAULT 0,         -- grams of companion needed for this recipe
+  UNIQUE(recipe_id, companion_recipe_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_recipe_companions_parent ON recipe_companions(parent_recipe_id);
-CREATE INDEX IF NOT EXISTS idx_recipe_companions_companion ON recipe_companions(companion_recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_companions_recipe ON recipe_companions(recipe_id);
 ```
 
-### Scaling Semantics
-
-Each companion is its own formula with its own baker's %. Scaling works as follows:
-
-1. The companion recipe defines a **base yield** (e.g. Sticky Bun Glaze yields 500g)
-2. The `scaling_ratio` on the link defines how much companion is needed per unit of parent production
-3. When the baker scales the parent recipe (e.g. 2× batch), the companion scales proportionally
-4. Internal ratios within the companion stay fixed — only the total quantity changes
-
-Example: Sweet Roll Dough makes 24 rolls. Sticky Bun Glaze base recipe yields enough for 24 rolls. If the baker doubles to 48 rolls, the glaze recipe also doubles.
+**Key difference from original spec:** Instead of a `scaling_ratio`, companions use a flat `qty` in grams — the baker says "I need 150g of Cinnamon Sugar" directly, similar to how preferment quantities work. This is simpler and matches the baker's mental model.
 
 ### Companion Roles
 
-| Role | Description | Applied When |
-|---|---|---|
-| `filling` | Incorporated during makeup (inside the dough) | Shaping stage |
-| `glaze` | Applied before or after baking | Finishing stage |
+| Role      | Description                                            | Applied When    |
+| --------- | ------------------------------------------------------ | --------------- |
+| `filling` | Incorporated during makeup (inside the dough)          | Shaping stage   |
+| `glaze`   | Applied before or after baking                         | Finishing stage |
 | `garnish` | Decorative topping (pearl sugar, powdered sugar, etc.) | Finishing stage |
-| `other` | Catch-all for unusual companions | Varies |
+| `other`   | Catch-all for unusual companions                       | Varies          |
 
-### API / CRUD
+### Implementation Details
 
-Extend `db.js`:
+**Server (`+page.server.js`):**
+- `load()` fetches `companionDetails` for each companion — loads the full recipe and runs `calculateRecipe()` to get ingredient breakdown for the inline summary
+- `save` action persists companions via delete+reinsert pattern (same as process steps)
+- Companion recipes must belong to the same bakery (enforced on save)
 
-```
-createCompanionLink(parentId, companionId, { role, scalingRatio, notes })
-removeCompanionLink(parentId, companionId)
-getCompanionsForRecipe(recipeId) → [{ companion: Recipe, role, scalingRatio }]
-getParentsForRecipe(recipeId) → [{ parent: Recipe, role }]
-```
+**Recipe builder UI (`+page.svelte`):**
+- Accompanied Recipes card: each companion has name (linked), editable qty (grams), role selector, notes, remove button, plus inline ingredient summary from the companion's own formula
+- Companions do NOT appear in the Ingredients table (per BBGA convention — they are separate preparations, not dough ingredients)
+- Add companion via dropdown of bakery recipes (excludes self and already-linked)
+- `buildRecipeData()` serializes companions with `qty`
 
-The `getRecipe()` function should optionally include companions (to avoid N+1 on recipe list views):
-
-```
-getRecipe(id, bakeryId, { includeCompanions: false })
-```
+**Versioning (`versions/+page.svelte`):**
+- Companion changes shown with colored badges: green (added), red (removed), outline (modified)
+- Side-by-side comparison highlights companion differences
 
 ### Constraints
 
-- A companion cannot be its own parent (no self-links)
-- A recipe can be a companion to multiple parents (e.g. same Cinnamon Sugar used by multiple recipes)
-- A recipe can have multiple companions
-- Deleting a parent recipe cascades to delete the links (not the companion recipe itself)
-- Companions are scoped to the same bakery as the parent
-
-### What This Phase Does NOT Include
-
-- Companions don't participate in §4/§5 calculations (no contribution to total formula, hydration, or baker's %)
-- No per-companion process steps in the parent's process flow (that's Phase 2)
-- No shared library / deduplication (that's Phase 3)
+- No self-links (enforced in `updateRecipe()`)
+- Companion must belong to the same bakery (verified on save)
+- Deleting a parent cascades to delete links (not the companion recipe)
+- A recipe can be a companion to multiple parents
 
 ---
 
-## 4. Phase 2 — Per-Stage Process Modeling
+## 4. Phase 2 — Per-Stage Process Modeling (Implemented)
 
 ### Goal
 
 Enable richer process documentation for preferments and multi-stage builds — full process step sequences per PF, not just DDT and fermentation duration.
 
-### Context
+### What Was Built
 
-Currently `preferment_settings` stores:
-
-| Field | Type |
-|---|---|
-| `ingredient_id` | TEXT (FK to recipe_ingredients) |
-| `enabled` | INTEGER |
-| `type` | TEXT (POOLISH, BIGA, LEVAIN, etc.) |
-| `ddt` | REAL |
-| `fermentation_duration_min` | INTEGER |
-
-This is sufficient for simple PFs (poolish, biga) but inadequate for:
-
-- **Italian Levain**: "Mix all ingredients until well incorporated with a DDT of 85°F. Feed every 4 hours, or once mature." — This is a 2-step process with repeated feedings.
-- **Pan d'Oro First Dough**: "Mix only until incorporated in first speed only. Ferment 2 hours at 85°F." — Specific mixing instructions.
-- **Columba di Pasqua**: 8-step detailed mixing process for the final dough involving staged addition of sugar and egg yolks as gluten develops.
-
-### Approach
-
-**Reuse the existing `process_steps` table.** Process steps are already keyed by `recipe_id`. But PF-specific steps need to be associated with a specific preferment ingredient, not just the recipe.
-
-Option A — Add a nullable FK to process_steps:
+**Option A was chosen** — a nullable FK on the existing `process_steps` table:
 
 ```sql
 ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT
   REFERENCES recipe_ingredients(id) ON DELETE CASCADE;
 ```
 
-- `preferment_ingredient_id = NULL` → step belongs to the main recipe (current behavior)
+- `preferment_ingredient_id = NULL` → step belongs to the main recipe
 - `preferment_ingredient_id = 'xyz'` → step belongs to that PF's build process
-
-Option B — Companion recipes for PFs (unify with Phase 1):
-
-Each PF that needs a full process sequence becomes a companion recipe (role = `preferment_build`). The PF ingredient in the parent still drives §5 calculations, but the companion recipe holds the detailed process steps.
-
-**Recommended: Option A** for simplicity. It keeps PF process steps co-located with the parent recipe while allowing fine-grained per-PF step sequences. Option B creates indirection that complicates the recipe builder UI.
+- Deleting a PF ingredient cascades to delete its process steps
 
 ### New Process Stages
 
-Add PF-specific stages to `PROCESS_STAGES`:
+Added to `PROCESS_STAGES` in `src/lib/process-steps.js`:
 
 ```js
-'PF_MIX'        // Mixing the preferment build
-'PF_FEED'       // Feeding cycle (levain refreshment)
-'PF_FERMENT'    // Preferment fermentation rest
+'PF_MIX'     // Mixing the preferment build
+'PF_FEED'    // Feeding cycle (levain refreshment)
+'PF_FERMENT' // Preferment fermentation rest
 ```
-
-These are optional — existing PFs continue to work with just the `preferment_settings` fields. The new stages are for bakers who want detailed process documentation.
 
 ### PF Process Step Suggestion
 
-Extend `suggestProcessSteps()` to optionally generate PF-specific steps:
+New export `suggestPfProcessSteps(pfType, pfName, pfIngredientId)` generates type-appropriate steps:
 
-```js
-// For a LEVAIN PF:
-[
-  { stage: 'PF_MIX', title: 'Mix Levain Build', description: 'Combine flour, water, and starter...', preferment_ingredient_id: 'xyz' },
-  { stage: 'PF_FEED', title: 'Feed Levain', description: 'Feed every 4 hours at 29°C until mature.', preferment_ingredient_id: 'xyz' },
-  { stage: 'PF_FERMENT', title: 'Levain Fermentation', duration_min: 480, temperature: 29, preferment_ingredient_id: 'xyz' },
-]
+| PF Type        | Suggested Steps                                                |
+| -------------- | -------------------------------------------------------------- |
+| POOLISH        | PF_MIX → PF_FERMENT (12–16h, 21°C)                           |
+| BIGA           | PF_MIX → PF_FERMENT (12–16h, 18°C)                           |
+| LEVAIN         | PF_MIX → PF_FEED (every 4h, 29°C) → PF_FERMENT (8–12h, 29°C) |
+| PATE_FERMENTEE | PF_MIX → PF_FERMENT (1–4h, 21°C)                             |
+| SPONGE         | PF_MIX → PF_FERMENT (12–16h, 21°C)                           |
+| CUSTOM         | PF_MIX → PF_FERMENT                                           |
 
-// For a SPONGE PF:
-[
-  { stage: 'PF_MIX', title: 'Mix Sponge', description: 'Combine flour, water, and yeast...', preferment_ingredient_id: 'abc' },
-  { stage: 'PF_FERMENT', title: 'Sponge Fermentation', duration_min: 720, temperature: 21, preferment_ingredient_id: 'abc' },
-]
-```
+### Recipe Builder UI
 
-### Production Timeline Integration (§9 prerequisite)
+- PF steps appear inside each PF card (after PF settings, before card close)
+- Compact step list: stage select, title, description, duration, temperature, remove button
+- "Suggest Steps" button calls `suggestPfProcessSteps()` and appends to `processSteps`
+- "Add Step" button adds an empty step with `preferment_ingredient_id` set
+- Main Process Steps section filters to `!preferment_ingredient_id` only
+
+### Production Page
+
+- PF steps are grouped under PF name + type badge headers
+- Shown in a "Pre-ferment Build Steps" card before the main Process Steps card
+- Only rendered if any PF steps exist
+
+### Versioning
+
+- `preferment_ingredient_id` included in step snapshots via `buildRecipeSnapshot()`
+- Step diffs track changes to `preferment_ingredient_id`
+
+### Also Implemented: Base Ingredient Category
+
+The engine previously hardcoded `FLOUR` as the baker's % denominator. Non-flour recipes (Cinnamon Sugar, glazes) got 0% for everything. Added `base_ingredient_category` to solve this:
+
+- **Database**: `recipes.base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'`
+- **Engine**: Uses `recipe.base_ingredient_category` for all base/BP% calculations
+- **UI**: Auto-detect warning when no ingredient matches current base; dropdown to override
+- **Versioning**: Included in snapshots and diffs
+- **Backward compatible**: Defaults to `FLOUR`
+
+### Also Implemented: Ingredients Table BP% Improvements
+
+- **PREFERMENT rows** now show their ratio (`pf.base_qty / total_base_flour`) as BP% instead of the always-zero `overall_bakers_pct`
+- **Companion rows** show BP% as `companion.qty / total_formula_flour`
+- Both are included in the table totals
+
+### Production Timeline Integration (§9 — future)
 
 When §9 is implemented, the PF process steps feed into the production timeline:
 
 1. Walk the PF dependency DAG (already implicit in `preferment_bakers_pcts`)
-2. For each PF, compute start time = main mix time − fermentation duration (existing logic in §5.5)
+2. For each PF, compute start time = main mix time − fermentation duration
 3. PFs that don't depend on each other can be scheduled in parallel
 4. PFs that depend on other PFs must be sequenced
-
-**Pan d'Oro critical path:**
-
-```
-T-24h: Start Italian Levain (feed cycle)
-T-8h:  Mix First Dough (depends on Levain)
-T-8h:  Mix Second Dough (independent — parallel with First Dough)
-T-6h:  First Dough fermentation complete
-T-6.5h: Second Dough fermentation complete
-T-5h:  Mix Third Dough (depends on both First + Second)
-T-2h:  Third Dough fermentation complete
-T-0:   Mix Final Dough
-```
-
-### Constraints
-
-- Existing recipes with simple PFs continue to work unchanged
-- PF process steps are optional — the baker can use just `preferment_settings` as before
-- Version snapshots (§12) must include PF process steps
 
 ---
 
@@ -302,6 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_recipe_templates_bakery ON recipe_templates(baker
 1. **Create template**: Baker defines an "Italian Levain" template. This creates a normal recipe (with ingredients, PF settings, process steps) and registers it in `recipe_templates`.
 
 2. **Reference from parent**: When the baker adds a PREFERMENT ingredient to a recipe and wants to use a library template:
+
    - Show a picker: "Use from library" vs "Define inline"
    - If library: link to the template. The PF's `preferment_bakers_pcts` and `preferment_settings` are copied from the template's recipe at link time.
    - The link is stored as metadata — enabling "pull updates" later.
@@ -359,31 +333,35 @@ ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER;
 
 ## 6. Data Model Changes — Summary
 
-### Phase 1 (new table)
+### Phase 1 (implemented — new table)
 
 ```sql
 CREATE TABLE IF NOT EXISTS recipe_companions (
   id TEXT PRIMARY KEY,
-  parent_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
   companion_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'other',
-  scaling_ratio REAL NOT NULL DEFAULT 1.0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
-  UNIQUE(parent_recipe_id, companion_recipe_id)
+  qty REAL NOT NULL DEFAULT 0,
+  UNIQUE(recipe_id, companion_recipe_id)
 );
 ```
 
-### Phase 2 (alter existing table)
+Migration for `qty` column: `ALTER TABLE recipe_companions ADD COLUMN qty REAL NOT NULL DEFAULT 0`
+
+### Phase 2 (implemented — alter existing tables)
 
 ```sql
 ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT
   REFERENCES recipe_ingredients(id) ON DELETE CASCADE;
+
+ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR';
 ```
 
 New PROCESS_STAGES: `PF_MIX`, `PF_FEED`, `PF_FERMENT`
 
-### Phase 3 (new table + alter existing)
+### Phase 3 (planned — new table + alter existing)
 
 ```sql
 CREATE TABLE IF NOT EXISTS recipe_templates (
@@ -411,194 +389,126 @@ All schema changes use the existing migration pattern in `db.js` (try/catch ALTE
 
 ## 7. Calculation Engine Impact
 
-### Phase 1: None
+### Phase 1: Minimal
 
-Companion recipes don't participate in §4/§5. They have their own independent calculation — same engine, separate recipe instance.
+Companion recipes don't participate in §4/§5 calculations. They have their own independent calculation — same engine, separate recipe instance. The parent recipe's `+page.server.js` loads each companion's calculated data for the inline summary display.
+
+**Change made:** `engine.js` now uses `recipe.base_ingredient_category` (defaulting to `'FLOUR'`) instead of hardcoded `'FLOUR'` for all baker's % denominators, hydration, and PF ratio calculations. This allows non-flour recipes (toppings, glazes) to compute meaningful percentages.
 
 ### Phase 2: Minimal
 
-PF process steps are documentation only — they don't affect quantities. The only engine change is extending `suggestProcessSteps()` to generate PF-specific steps with the `preferment_ingredient_id` field.
+PF process steps are documentation only — they don't affect quantities. The only change is `suggestPfProcessSteps()` in `process-steps.js` which generates PF-specific steps.
 
-### Phase 3: None
+### Phase 3: None (planned)
 
-Templates are a UI/management layer. The calculation engine sees the same data as before — ingredients, PF baker's %, PF settings. Whether those values came from a template or were entered inline is invisible to the engine.
+Templates are a UI/management layer. The calculation engine sees the same data as before.
 
 ### Total Formula Resolution (existing — no change needed)
 
-§5's topological sort already resolves multi-stage builds:
-
-```
-Pan d'Oro in the engine:
-- Final Dough has ingredient "Third Dough" (PREFERMENT)
-- Third Dough has ingredients "First Dough" (PREFERMENT) + "Second Dough" (PREFERMENT)
-- First Dough has ingredient "Levain" (PREFERMENT)
-- Each PF's contributions decompose into total formula via preferment_bakers_pcts
-```
-
-The engine doesn't need to know about the DAG structure — it processes PFs in dependency order (topological sort) and the math works out.
+§5's topological sort already resolves multi-stage builds. The engine processes PFs in dependency order and the math works out.
 
 ---
 
 ## 8. UI Changes
 
-### Phase 1: Recipe Builder
+### Phase 1: Recipe Builder (Implemented)
 
-Add an "Accompanied Recipes" section below the ingredients table:
+**Accompanied Recipes card** — dedicated section for companion management (separate from Ingredients table per BBGA convention):
+- Each companion row: name (linked), editable qty (grams), role selector, notes, remove button
+- Inline ingredient summary from the companion's own formula (name, qty, internal BP%, total weight)
+- Add companion via dropdown of bakery recipes (excludes self and already-linked)
+- Companions do NOT appear in the Ingredients table — the dough formula stays pure
 
-```
-┌─ Accompanied Recipes ──────────────────────────────────┐
-│                                                         │
-│  Cinnamon Sugar (filling)              [Edit] [Remove]  │
-│  Sticky Bun Glaze (glaze)             [Edit] [Remove]  │
-│                                                         │
-│  [+ Add Companion]  [Link Existing Recipe]              │
-└─────────────────────────────────────────────────────────┘
-```
+**Versioning** — versions comparison page shows:
+- Companion additions (green badge), removals (red badge), modifications (outline badge with field diff)
+- Side-by-side comparison with change highlighting
 
-- **Add Companion**: Creates a new recipe in the same bakery and links it
-- **Link Existing Recipe**: Picker to select from bakery's recipe list
-- **Edit**: Navigates to the companion recipe's builder page
-- **Remove**: Removes the link (not the recipe itself)
+**Dough type selector** — shadcn Select with grouped headings (Bread / Pastry / Component). Confirm dialog when changing type with existing process steps.
 
-### Phase 1: Recipe List
+### Phase 2: PF Process Steps in Recipe Builder (Implemented)
 
-Show companion count or badges:
+PF steps appear inside each PF card after the settings row:
+- Compact step list: stage select, title, description, duration, temperature, remove
+- "Suggest Steps" and "Add Step" buttons
+- Main Process Steps section shows only `!preferment_ingredient_id` steps
 
-```
-Rustic Baguette                              0 companions
-Sweet Roll Dough                             2 companions (filling, glaze)
-  └ Cinnamon Sugar                           ← shown indented or as sub-row
-  └ Sticky Bun Glaze
-```
+Production page groups PF steps under PF name + type badge headers.
 
-### Phase 1: Production Page
+### Phase 3: Template Library (Planned)
 
-When producing a recipe with companions, show companion quantities alongside:
-
-```
-Sweet Roll Dough — 48 pieces
-  Main Dough: 12,000g
-  Companions:
-    Cinnamon Sugar: 800g (filling)
-    Sticky Bun Glaze: 1,200g (glaze)
-```
-
-### Phase 2: PF Process Steps in Recipe Builder
-
-Within the preferment expandable section (already exists for PF settings), add an optional process steps sub-section:
-
-```
-┌─ Levain (LEVAIN) ──────────────────────────────────────┐
-│  DDT: 29°C   Fermentation: 8h   Enabled: ✓            │
-│                                                         │
-│  ▼ Process Steps (optional)                             │
-│  1. PF_MIX: Mix Levain Build                           │
-│  2. PF_FEED: Feed every 4h at 29°C                     │
-│  3. PF_FERMENT: Ferment 8h                             │
-│  [+ Add Step]  [Suggest Steps]                          │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Phase 3: Template Library
-
-New route: `/(app)/recipes/templates/`
-
-```
-┌─ Sub-Recipe Library ───────────────────────────────────┐
-│                                                         │
-│  Italian Levain (preferment)       Used in 3 recipes    │
-│  Pastry Cream (filling)            Used in 5 recipes    │
-│  Cinnamon Sugar (filling)          Used in 2 recipes    │
-│  Sticky Bun Glaze (glaze)          Used in 1 recipe     │
-│                                                         │
-│  [+ Create Template]                                    │
-└─────────────────────────────────────────────────────────┘
-```
+New route: `/(app)/recipes/templates/` — shared sub-recipe definitions reusable across parent recipes.
 
 ---
 
 ## 9. Cross-Section Impact Matrix
 
-| Section | Phase 1 | Phase 2 | Phase 3 |
-|---|---|---|---|
-| §3 Data Model | New `recipe_companions` table | Alter `process_steps` | New `recipe_templates` table |
-| §4 Calculation Engine | None | None | None |
-| §5 Pre-ferment System | None | PF process step generation | Template source tracking |
-| §8 Autolyse | None | None | None |
-| §9 Timeline (future) | Companion production scheduling | PF DAG critical path | Template update notifications |
-| §10 Process Steps | None | New PF stages, `preferment_ingredient_id` FK | None |
-| §11 Loss/Waste | Per-companion loss tracking | None | None |
-| §12 Versioning | Include companion links in snapshots | Include PF steps in snapshots | Track template source version |
-| §15 Dough Type | None | None | None |
-| Multi-tenancy (§8) | Companions scoped to bakery | None | Templates scoped to bakery |
+| Section               | Phase 1 (Done)                       | Phase 2 (Done)                                                    | Phase 3 (Planned)             |
+| --------------------- | ------------------------------------ | ----------------------------------------------------------------- | ----------------------------- |
+| §3 Data Model         | New `recipe_companions` table + qty  | Alter `process_steps`; alter `recipes` (base_ingredient_category) | New `recipe_templates` table  |
+| §4 Calculation Engine | Companion BP% in ingredients table   | Engine uses `base_ingredient_category`; PF ratio as BP%           | None                          |
+| §5 Pre-ferment System | None                                 | PF process step generation (`suggestPfProcessSteps`)              | Template source tracking      |
+| §8 Autolyse           | None                                 | None                                                              | None                          |
+| §9 Timeline (future)  | Companion production scheduling      | PF DAG critical path                                              | Template update notifications |
+| §10 Process Steps     | None                                 | New PF stages, `preferment_ingredient_id` FK                      | None                          |
+| §11 Loss/Waste        | Per-companion loss tracking           | None                                                              | None                          |
+| §12 Versioning        | Companion links in snapshots + diffs | PF steps in snapshots; `base_ingredient_category` in diffs        | Track template source version |
+| §15 Dough Type        | None                                 | Component types (TOPPING, GLAZE, FILLING, SAUCE); shadcn Select   | None                          |
+| Multi-tenancy         | Companions scoped to bakery          | None                                                              | Templates scoped to bakery    |
 
 ---
 
 ## 10. Migration Strategy
 
-All phases use the existing migration pattern in `db.js`:
+All phases use the existing migration pattern in `db.js` (try/catch ALTER TABLE, CREATE TABLE IF NOT EXISTS):
 
-```js
-const migrations = [
-  // ... existing migrations ...
+**Phase 1 migrations (applied):**
+- `recipe_companions` table created in schema init
+- `ALTER TABLE recipe_companions ADD COLUMN qty REAL NOT NULL DEFAULT 0`
 
-  // Phase 1
-  `CREATE TABLE IF NOT EXISTS recipe_companions (
-    id TEXT PRIMARY KEY,
-    parent_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
-    companion_recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
-    role TEXT NOT NULL DEFAULT 'other',
-    scaling_ratio REAL NOT NULL DEFAULT 1.0,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    notes TEXT,
-    UNIQUE(parent_recipe_id, companion_recipe_id)
-  )`,
+**Phase 2 migrations (applied):**
+- `ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT REFERENCES recipe_ingredients(id) ON DELETE CASCADE`
+- `ALTER TABLE recipes ADD COLUMN base_ingredient_category TEXT NOT NULL DEFAULT 'FLOUR'`
 
-  // Phase 2
-  'ALTER TABLE process_steps ADD COLUMN preferment_ingredient_id TEXT REFERENCES recipe_ingredients(id) ON DELETE CASCADE',
+**Phase 3 migrations (planned):**
+- `recipe_templates` table + `source_template_id` columns
 
-  // Phase 3
-  // ... recipe_templates table, source_template_id columns ...
-]
-```
-
-**Zero breaking changes.** All additions are additive:
-- New tables (no existing data affected)
-- New nullable columns (existing rows get NULL)
-- New process stages (existing steps keep their current stages)
-- Existing PFs continue to work with just `preferment_settings`
+**Zero breaking changes.** All additions are additive — new tables, nullable columns, default values. Existing recipes work unchanged.
 
 ---
 
 ## 11. Test Plan
 
-### Phase 1 Tests
+### Phase 1 Tests (verified)
 
 ```
-C1. Create companion link → appears in getCompanionsForRecipe()
-C2. Delete parent recipe → companion link deleted, companion recipe survives
-C3. Delete companion recipe → link deleted, parent recipe unaffected
-C4. Same companion linked to 2 parents → both parents see it
-C5. Scaling: parent batch 2× → companion scales proportionally
-C6. Self-link prevention → error
-C7. Companion scoped to same bakery as parent
-C8. Recipe list includes companion count
-C9. Version snapshot includes companion links
+C1. ✅ Create companion link → appears in recipe's companions array
+C2. ✅ Delete parent recipe → companion link deleted (CASCADE), companion recipe survives
+C3. ✅ Delete companion recipe → link deleted (CASCADE), parent recipe unaffected
+C4. ✅ Same companion linked to 2 parents → both parents see it
+C5. ✅ Self-link prevention → skipped on save (defense in depth)
+C6. ✅ Companion scoped to same bakery → verified on save
+C7. ✅ Version snapshot includes companion links with qty
+C8. ✅ Companion BP% computed relative to parent recipe's flour
+C9. ✅ Companion qty included in ingredients table totals
+C10. ✅ Versions comparison shows companion add/remove/modify
 ```
 
-### Phase 2 Tests
+### Phase 2 Tests (verified)
 
 ```
-P1. Process step with preferment_ingredient_id → associated with correct PF
-P2. Process step with NULL preferment_ingredient_id → main recipe (backward compat)
-P3. Delete PF ingredient → cascades to delete PF-specific steps
-P4. suggestProcessSteps() generates PF-specific steps for LEVAIN
-P5. suggestProcessSteps() generates PF-specific steps for SPONGE
-P6. PF process steps included in version snapshot
-P7. New PF stages (PF_MIX, PF_FEED, PF_FERMENT) accepted by validation
+P1. ✅ Process step with preferment_ingredient_id → associated with correct PF
+P2. ✅ Process step with NULL preferment_ingredient_id → main recipe (backward compat)
+P3. ✅ Delete PF ingredient → cascades to delete PF-specific steps
+P4. ✅ suggestPfProcessSteps() generates steps for LEVAIN (MIX + FEED + FERMENT)
+P5. ✅ suggestPfProcessSteps() generates steps for all PF types
+P6. ✅ PF process steps included in version snapshot
+P7. ✅ base_ingredient_category defaults to FLOUR, overridable
+P8. ✅ Non-flour recipes (SWEETENER base) compute meaningful BP%
+P9. ✅ PF rows show ratio as BP% instead of 0
+P10. ✅ Build passes, existing tests pass
 ```
 
-### Phase 3 Tests
+### Phase 3 Tests (planned)
 
 ```
 T1. Create template → appears in template library
@@ -657,12 +567,12 @@ Levain → First Dough ─┐
 Second Dough ─────────┘
 ```
 
-| Stage | Key Ingredients (BP) | Process |
-|---|---|---|
-| Italian Levain | Flour (100%), Water (50%), Starter (140%) | Mix DDT 29°C, feed every 4h |
-| First Dough | Flour (100%), Water (50%), Eggs (40%), Sugar (25%), Levain (145%) | Mix 1st speed only, ferment 2h at 29°C |
-| Second Dough | Flour (100%), Eggs (65%), Sugar (20%), Osmotolerant yeast (2%) | Mix 1st speed only, ferment 1.5h at 29°C |
-| Third Dough | Flour (100%), Eggs (44%), Sugar (20%), Butter (5.55%), First Dough (400%), Second Dough (128%) | Mix 1st speed only, ferment 3h at 29°C |
-| Final Dough | Flour (100%), Eggs (75.75%), Salt (2.4%), Sugar (48.48%), Honey (4.5%), Butter (75.75%), Cocoa butter (4.5%), Third Dough (190%) | Intensive mix (8-step staged process), DDT 25-29°C, proof 14h at 22°C, bake 35 min at 203°C |
+| Stage          | Key Ingredients (BP)                                                                                                             | Process                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Italian Levain | Flour (100%), Water (50%), Starter (140%)                                                                                        | Mix DDT 29°C, feed every 4h                                                                 |
+| First Dough    | Flour (100%), Water (50%), Eggs (40%), Sugar (25%), Levain (145%)                                                                | Mix 1st speed only, ferment 2h at 29°C                                                      |
+| Second Dough   | Flour (100%), Eggs (65%), Sugar (20%), Osmotolerant yeast (2%)                                                                   | Mix 1st speed only, ferment 1.5h at 29°C                                                    |
+| Third Dough    | Flour (100%), Eggs (44%), Sugar (20%), Butter (5.55%), First Dough (400%), Second Dough (128%)                                   | Mix 1st speed only, ferment 3h at 29°C                                                      |
+| Final Dough    | Flour (100%), Eggs (75.75%), Salt (2.4%), Sugar (48.48%), Honey (4.5%), Butter (75.75%), Cocoa butter (4.5%), Third Dough (190%) | Intensive mix (8-step staged process), DDT 25-29°C, proof 14h at 22°C, bake 35 min at 203°C |
 
 This is the most complex test case — validates multi-stage PF chains, parallel scheduling, per-stage process steps, and (in Phase 3) template reuse of the Italian Levain.
