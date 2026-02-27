@@ -2344,3 +2344,21 @@ export function deleteExpiredWebAuthnChallenges() {
     Date.now()
   )
 }
+
+export function getUserPasskeys(userId) {
+  const db = getDb()
+  return db
+    .prepare(
+      "SELECT id, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? AND kind = 'passkey'"
+    )
+    .all(userId)
+}
+
+export function countUserPasskeys(userId) {
+  const db = getDb()
+  return db
+    .prepare(
+      "SELECT COUNT(*) as count FROM webauthn_credentials WHERE user_id = ? AND kind = 'passkey'"
+    )
+    .get(userId).count
+}

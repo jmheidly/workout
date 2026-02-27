@@ -7,6 +7,9 @@ import {
   getUserMfaKeys,
   countUserMfaKeys,
   setUserMfaEnabled,
+  getUserPasskeys,
+  getWebAuthnCredential,
+  deleteWebAuthnCredential,
 } from '$lib/server/db.js'
 import {
   hashPassword,
@@ -20,6 +23,7 @@ import {
 export function load({ locals }) {
   const full = getUserByEmail(locals.user.email)
   const mfaKeys = getUserMfaKeys(locals.user.id)
+  const passkeys = getUserPasskeys(locals.user.id)
   return {
     profile: {
       name: locals.user.name || '',
@@ -29,6 +33,11 @@ export function load({ locals }) {
     },
     mfaEnabled: full?.mfa_enabled === 1,
     mfaKeys: mfaKeys.map((k) => ({
+      id: k.id,
+      createdAt: k.created_at,
+      lastUsedAt: k.last_used_at,
+    })),
+    passkeys: passkeys.map((k) => ({
       id: k.id,
       createdAt: k.created_at,
       lastUsedAt: k.last_used_at,
@@ -97,6 +106,24 @@ export const actions = {
 
     setUserMfaEnabled(locals.user.id, 1)
     return { mfaSuccess: 'Two-factor authentication enabled.' }
+  },
+
+  removePasskey: async ({ request, locals }) => {
+    const form = await request.formData()
+    const keyId = form.get('keyId')?.toString()
+    if (!keyId) return fail(400, { passkeyError: 'Missing key ID' })
+
+    const credential = getWebAuthnCredential(keyId)
+    if (
+      !credential ||
+      credential.user_id !== locals.user.id ||
+      credential.kind !== 'passkey'
+    ) {
+      return fail(404, { passkeyError: 'Passkey not found' })
+    }
+
+    deleteWebAuthnCredential(keyId)
+    return { passkeySuccess: 'Passkey removed.' }
   },
 
   deleteAccount: async ({ locals, cookies }) => {

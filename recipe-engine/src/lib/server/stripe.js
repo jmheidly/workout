@@ -1,4 +1,5 @@
 import Stripe from 'stripe'
+import { env } from '$env/dynamic/private'
 
 /** @type {Stripe | null} */
 let _stripe = null
@@ -10,7 +11,7 @@ let _stripe = null
 export function getStripe() {
   if (_stripe) return _stripe
 
-  const key = process.env.STRIPE_SECRET_KEY
+  const key = env.STRIPE_SECRET_KEY
   if (!key) return null
 
   _stripe = new Stripe(key)

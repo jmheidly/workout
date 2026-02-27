@@ -16,6 +16,10 @@
   let mfaError = $state('')
   let mfaMessage = $state('')
   let removingKeyId = $state(null)
+  let passkeyLoading = $state(false)
+  let passkeyError = $state('')
+  let passkeyMessage = $state('')
+  let removingPasskeyId = $state(null)
 
   async function addSecurityKey() {
     mfaLoading = true
@@ -80,6 +84,49 @@
       mfaError = 'Failed to remove key.'
     } finally {
       removingKeyId = null
+    }
+  }
+
+  async function addPasskey() {
+    passkeyLoading = true
+    passkeyError = ''
+    passkeyMessage = ''
+
+    try {
+      const optionsRes = await fetch('/api/passkey/register/options', {
+        method: 'POST',
+      })
+      if (!optionsRes.ok) {
+        const err = await optionsRes.json()
+        passkeyError = err.error || 'Failed to get registration options'
+        return
+      }
+
+      const { challengeId, options } = await optionsRes.json()
+      const registrationResponse = await startRegistration({ optionsJSON: options })
+
+      const verifyRes = await fetch('/api/passkey/register/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId, registrationResponse }),
+      })
+
+      if (!verifyRes.ok) {
+        const err = await verifyRes.json()
+        passkeyError = err.error || 'Registration failed'
+        return
+      }
+
+      passkeyMessage = 'Passkey added successfully.'
+      await invalidateAll()
+    } catch (err) {
+      if (err?.name === 'NotAllowedError') {
+        passkeyError = 'Registration was cancelled.'
+      } else {
+        passkeyError = 'An unexpected error occurred.'
+      }
+    } finally {
+      passkeyLoading = false
     }
   }
 
@@ -213,6 +260,98 @@
           </div>
         </FieldGroup>
       </form>
+    </div>
+  </section>
+
+  <Separator />
+
+  <!-- Passkeys Section -->
+  <section class="grid gap-8 md:grid-cols-[220px_1fr]">
+    <div>
+      <h2 class="text-sm font-medium">Passkeys</h2>
+      <p class="text-xs text-muted-foreground">Sign in with Touch ID, Face ID, or a security key — no password needed.</p>
+    </div>
+
+    <div class="space-y-4">
+      {#if passkeyError}
+        <div class="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {passkeyError}
+        </div>
+      {/if}
+      {#if passkeyMessage}
+        <div class="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+          {passkeyMessage}
+        </div>
+      {/if}
+      {#if form?.passkeyError}
+        <div class="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {form.passkeyError}
+        </div>
+      {/if}
+      {#if form?.passkeySuccess}
+        <div class="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+          {form.passkeySuccess}
+        </div>
+      {/if}
+
+      {#if data.passkeys.length > 0}
+        <div class="rounded-lg border">
+          {#each data.passkeys as key, i (key.id)}
+            {#if i > 0}
+              <Separator />
+            {/if}
+            <div class="flex items-center justify-between px-4 py-3">
+              <div class="flex items-center gap-3">
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M7 11V7a5 5 0 0 1 9.9-1"/><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><circle cx="12" cy="16" r="1"/></svg>
+                </div>
+                <div>
+                  <p class="text-sm font-medium">Passkey</p>
+                  <p class="text-xs text-muted-foreground">
+                    Added {formatDate(key.createdAt)} &middot; Last used {formatDate(key.lastUsedAt)}
+                  </p>
+                </div>
+              </div>
+              <form
+                method="POST"
+                action="?/removePasskey"
+                use:enhance={() => {
+                  removingPasskeyId = key.id
+                  return async ({ update }) => {
+                    removingPasskeyId = null
+                    await update({ reset: false })
+                  }
+                }}
+              >
+                <input type="hidden" name="keyId" value={key.id} />
+                <Button
+                  type="submit"
+                  variant="ghost"
+                  size="sm"
+                  class="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  disabled={removingPasskeyId === key.id}
+                >
+                  {removingPasskeyId === key.id ? 'Removing...' : 'Remove'}
+                </Button>
+              </form>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="rounded-lg border border-dashed px-4 py-8 text-center">
+          <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M7 11V7a5 5 0 0 1 9.9-1"/><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><circle cx="12" cy="16" r="1"/></svg>
+          </div>
+          <p class="text-sm font-medium">No passkeys</p>
+          <p class="text-xs text-muted-foreground">Add a passkey for fast, passwordless sign-in.</p>
+        </div>
+      {/if}
+
+      <div>
+        <Button onclick={addPasskey} disabled={passkeyLoading} variant="outline">
+          {passkeyLoading ? 'Registering...' : 'Add passkey'}
+        </Button>
+      </div>
     </div>
   </section>
 

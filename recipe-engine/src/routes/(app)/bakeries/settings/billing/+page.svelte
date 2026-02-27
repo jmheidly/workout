@@ -35,36 +35,40 @@
     }
   }
 
+  let errorMsg = $state('')
+
   async function handleCheckout() {
     loading = true
+    errorMsg = ''
     try {
       const res = await fetch('/api/stripe/checkout', { method: 'POST' })
       const body = await res.json()
       if (body.url) {
         window.location.href = body.url
       } else {
-        alert(body.error || 'Failed to create checkout session')
+        errorMsg = body.error || body.message || 'Failed to create checkout session'
         loading = false
       }
     } catch {
-      alert('Failed to connect to billing service')
+      errorMsg = 'Failed to connect to billing service'
       loading = false
     }
   }
 
   async function handlePortal() {
     loading = true
+    errorMsg = ''
     try {
       const res = await fetch('/api/stripe/portal', { method: 'POST' })
       const body = await res.json()
       if (body.url) {
         window.location.href = body.url
       } else {
-        alert(body.error || 'Failed to open billing portal')
+        errorMsg = body.error || body.message || 'Failed to open billing portal'
         loading = false
       }
     } catch {
-      alert('Failed to connect to billing service')
+      errorMsg = 'Failed to connect to billing service'
       loading = false
     }
   }
@@ -160,6 +164,12 @@
       </div>
     </Card.CardContent>
   </Card.Card>
+
+  {#if errorMsg}
+    <div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+      {errorMsg}
+    </div>
+  {/if}
 
   <Card.Card>
     <Card.CardHeader>

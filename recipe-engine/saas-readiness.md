@@ -6,28 +6,33 @@ Last updated: 2026-02-28
 
 ## Current Status Summary
 
-The recipe engine has a solid foundation: multi-tenancy with RBAC, four auth methods (password, passwordless OTP, Google OAuth, email code login), email verification, email infrastructure, legal pages, and account management. The primary gaps are infrastructure/ops (billing, backups, CI/CD, monitoring).
+The recipe engine has a comprehensive feature set: multi-tenancy with RBAC, five auth methods (password, passwordless OTP, Google OAuth, email code login, passkey/WebAuthn), WebAuthn 2FA, email verification, Stripe billing with subscription gating, email infrastructure, legal pages, and account management. The remaining gaps are infrastructure/ops (backups, CI/CD, monitoring).
 
 | Category | Status |
 |----------|--------|
-| Authentication (password + passwordless + OTP + Google OAuth) | Done |
+| Authentication (password + passwordless + OTP + Google OAuth + passkey) | Done |
+| WebAuthn 2FA (security key / biometric on login) | Done |
+| Passkey auth (passwordless primary login) | Done |
 | Password reset (token + OTP) | Done |
 | Passwordless signup + OTP login | Done |
 | Email service (Resend) | Done |
+| Email verification on signup | Done |
 | Multi-tenancy (bakery scoping, roles, invites) | Done |
 | Invitation emails | Done |
 | Terms of Service + Privacy Policy | Done |
 | Health check endpoint | Done |
-| User settings (profile, password, delete) | Done |
+| User settings (profile, password, passkeys, 2FA, delete) | Done |
 | Data export (JSON) | Done |
 | Account deletion (cascading) | Done |
 | .env secured / .gitignore correct | Done |
-| Billing / Stripe | Not started |
-| Email verification on signup | Done |
+| Billing / Stripe (checkout, webhooks, portal, gating) | Done |
+| SQLite performance pragmas | Done |
 | Error monitoring (Sentry) | Not started |
-| SQLite backup strategy | Not started |
+| SQLite backup strategy (Litestream) | Not started |
 | Docker + CI/CD | Not started |
 | Rate limiter persistence | Not started |
+
+**Progress: 17/21 items complete. 4 remaining (all infrastructure/ops).**
 
 ---
 
@@ -71,32 +76,24 @@ All P0 items are complete.
 
 ## P1 — Required for paid SaaS launch
 
-### 1. Billing / Stripe — NOT STARTED
+### 1. Billing / Stripe — DONE
 
-**What's needed:**
-- Stripe integration (checkout, customer portal, webhooks)
-- Plan tiers (free, pro, team — or similar)
-- Feature gating based on plan
-- Pricing page
-- Webhook handler for subscription events
-
-**Key decisions:**
-- Per-bakery or per-user billing?
-- What features are gated? (recipe count, member count, templates, export)
-- Free tier limits?
-
-**Files to create:**
-- `src/lib/server/stripe.js` — Stripe client, webhook handler
-- `src/routes/pricing/` — public pricing page
-- `src/routes/api/webhooks/stripe/` — webhook endpoint
-- `src/routes/(app)/bakeries/settings/billing/` — billing management UI
-- DB: `subscriptions` table, `bakeries.plan` column
+- Stripe SDK integration (`src/lib/server/stripe.js`)
+- Subscription management (`src/lib/server/billing.js`)
+- Plan logic and status resolution (`src/lib/server/plans.js`)
+- `bakery_subscriptions` table: `stripe_customer_id`, `stripe_subscription_id`, `stripe_price_id`, `current_period_end`, `cancel_at_period_end`
+- Checkout endpoint: `src/routes/api/stripe/checkout/+server.js`
+- Webhook handler: `src/routes/api/stripe/webhook/+server.js`
+  - Events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.paid`
+- Billing management UI: `src/routes/(app)/bakeries/settings/billing/`
+- Subscription gating in `hooks.server.js` — inactive subscriptions redirected to `/bakeries/settings/billing`
+- Feature-level gating via `requireSubscription()` and `requireEntitlement()` helpers
 
 ### 2. Email verification on signup — DONE
 
 - `users.email_verified_at` column (NULL = unverified, timestamp = verified)
 - `hooks.server.js` gates unverified users → redirect to `/verify-email`
-- Bypass paths: `/verify-email`, `/login`, `/logout`, `/signup`, `/health`, `/terms`, `/privacy`
+- Bypass paths: `/verify-email`, `/login`, `/logout`, `/signup`, `/health`, `/terms`, `/privacy`, `/mfa`, `/api/mfa`, `/api/passkey`
 - Signup auto-sends 6-digit OTP, redirects to `/verify-email`
 - Google OAuth users auto-verified at account creation and account linking
 - Existing users backfilled as verified on migration
@@ -115,12 +112,35 @@ All P0 items are complete.
 
 - Profile update (name)
 - Password change (set or change)
+- Passkeys management (add/remove, passwordless login)
+- Two-factor authentication (WebAuthn security keys, enable/disable)
 - Data export button
 - Account deletion with confirmation
-- Shows auth methods (password, Google)
 - File: `src/routes/(app)/settings/+page.svelte`
 
-### 5. Error monitoring — NOT STARTED
+### 5. WebAuthn 2FA — DONE
+
+- Security key enrollment: `src/routes/api/mfa/webauthn/enroll/` (options + verify)
+- MFA login challenge: `src/routes/api/mfa/webauthn/options/+server.js`
+- MFA login verify: `src/routes/api/mfa/webauthn/verify/+server.js`
+- Credential management: `src/routes/api/mfa/webauthn/credentials/` (list + delete)
+- `mfa_pending` table for pending MFA challenges with attempt tracking
+- `users.mfa_enabled` toggle, managed in settings
+- MFA challenge page: `src/routes/mfa/`
+- Config: `src/lib/server/webauthn-config.js` (rpName, rpID, origin)
+
+### 6. Passkey auth — DONE
+
+- Passwordless primary login via Touch ID / Face ID / security keys
+- Login endpoints (public): `src/routes/api/passkey/login/` (options + verify)
+- Registration endpoints (authed): `src/routes/api/passkey/register/` (options + verify)
+- `kind='passkey'` vs `kind='mfa_key'` in `webauthn_credentials` — independent management
+- Login verify accepts any credential kind (platform auths create discoverable creds regardless of hint)
+- Passkey login bypasses MFA, creates session directly
+- Settings page: Passkeys section between Password and 2FA
+- Full docs: `passkey-auth.md`
+
+### 7. Error monitoring — NOT STARTED
 
 **What's needed:**
 - Sentry (or Bugsnag/LogRocket) integration
@@ -135,7 +155,7 @@ All P0 items are complete.
 - `src/hooks.client.js` — add client error handler
 - `svelte.config.js` — Sentry Vite plugin for source maps
 
-### 6. SQLite backup strategy — NOT STARTED
+### 8. SQLite backup strategy — NOT STARTED
 
 **What's needed:**
 - Litestream for continuous WAL-based replication to S3/R2
@@ -149,7 +169,7 @@ All P0 items are complete.
 - `Dockerfile` — run Litestream as init process, Node as subprocess
 - Deployment docs with restore procedures
 
-### 7. Docker + CI/CD — NOT STARTED
+### 9. Docker + CI/CD — NOT STARTED
 
 **What's needed:**
 - Multi-stage Dockerfile (build + runtime)
@@ -163,7 +183,7 @@ All P0 items are complete.
 - `.github/workflows/ci.yml`
 - `.dockerignore`
 
-### 8. Rate limiter persistence — NOT STARTED
+### 10. Rate limiter persistence — NOT STARTED
 
 **Current state:** In-memory `Map<string, Map<string, number[]>>` — resets on server restart.
 
@@ -184,20 +204,19 @@ All P0 items are complete.
 - 7-day expiry, role included in email body
 - File: `src/lib/server/email.js`
 
-### 2. SQLite performance pragmas — PARTIALLY DONE
+### 2. SQLite performance pragmas — DONE
 
-**Current:** `journal_mode = WAL`, `foreign_keys = ON`
-
-**Add to `getDb()`:**
+All recommended pragmas are set in `getDb()`:
 ```js
-_db.pragma('busy_timeout = 5000')        // wait 5s on lock instead of failing
-_db.pragma('synchronous = NORMAL')       // safe with WAL, 2x faster writes
-_db.pragma('cache_size = -64000')        // 64MB page cache
-_db.pragma('mmap_size = 268435456')      // 256MB memory-mapped I/O
-_db.pragma('temp_store = MEMORY')        // temp tables in memory
+_db.pragma('busy_timeout = 5000')
+_db.pragma('synchronous = NORMAL')
+_db.pragma('cache_size = -64000')
+_db.pragma('mmap_size = 268435456')
+_db.pragma('temp_store = MEMORY')
 ```
+Plus `journal_mode = WAL` and `foreign_keys = ON`.
 
-**File:** `src/lib/server/db.js` lines 14-18
+File: `src/lib/server/db.js`
 
 ### 3. N+1 on recipe list — NOT OPTIMIZED
 
@@ -212,7 +231,7 @@ _db.pragma('temp_store = MEMORY')        // temp tables in memory
 
 ### 4. Usage limits tied to billing — NOT STARTED
 
-Depends on Stripe integration (P1.1). Define limits per plan:
+Depends on entitlement checks from Stripe (P1.1, now done). Define limits per plan:
 
 | Limit | Free | Pro | Team |
 |-------|------|-----|------|
@@ -221,7 +240,7 @@ Depends on Stripe integration (P1.1). Define limits per plan:
 | Templates | 3 | Unlimited | Unlimited |
 | Data export | No | Yes | Yes |
 
-Enforce in `requireRole()` or a new `requirePlan()` middleware.
+Enforce via `requireEntitlement()` helper in `src/lib/server/billing.js`.
 
 ### 5. Onboarding flow — BASIC
 
@@ -278,38 +297,36 @@ Only cookie is `recipe_session` (httpOnly, functional). Privacy policy states no
 ## What's Already Solid
 
 - **Multi-tenancy**: Bakery-scoped data, RBAC with 4 roles, defense-in-depth DB scoping
-- **Auth**: Scrypt hashing (N=2^14), SHA256 session tokens, 30-day auto-extending sessions, Google OAuth with PKCE, passwordless OTP login + passwordless signup (no password required), email verification on signup
+- **Auth**: Five methods — password, passwordless OTP, Google OAuth, email code login, passkey/WebAuthn. Scrypt hashing (N=2^14), SHA256 session tokens, 30-day auto-extending sessions
+- **2FA**: WebAuthn security keys with MFA pending flow, attempt tracking, 5-minute challenge expiry
+- **Passkeys**: Passwordless primary auth via discoverable WebAuthn credentials, bypasses MFA
+- **Billing**: Stripe checkout, webhooks, subscription gating in hooks, entitlement helpers
 - **Security headers**: X-Frame-Options DENY, X-Content-Type-Options nosniff, HSTS (production), Referrer-Policy
 - **CSRF protection**: SvelteKit form actions with built-in CSRF
 - **SQL injection prevention**: Parameterized queries throughout
+- **SQLite tuning**: WAL mode, all recommended pragmas (busy_timeout, synchronous NORMAL, 64MB cache, 256MB mmap)
 - **Testing**: 41 role enforcement tests covering all protected routes
 - **Invite system**: Token-based with email delivery, passthrough across OAuth flow
 
 ---
 
-## Recommended Implementation Order
+## Remaining Work — Implementation Order
 
 ### Phase 1: Infrastructure (before any public users)
-1. SQLite performance pragmas (30 min)
-2. Litestream backup + Dockerfile (half day)
-3. GitHub Actions CI (lint + test + build) (2-3 hours)
-4. Rate limiter to SQLite (1-2 hours)
+1. Litestream backup + Dockerfile
+2. GitHub Actions CI (lint + test + build)
+3. Rate limiter to SQLite
 
 ### Phase 2: Security hardening
-5. ~~Email verification on signup~~ — DONE
-6. Sentry integration (1-2 hours)
-7. Cross-tenant isolation tests (2-3 hours)
+4. Sentry integration
+5. Cross-tenant isolation tests
 
-### Phase 3: Monetization
-8. Stripe integration + plan tiers (2-3 days)
-9. Usage limits enforcement (half day)
-10. Pricing page (half day)
-
-### Phase 4: Growth
-11. Analytics (Plausible) (30 min)
-12. Onboarding flow (half day)
-13. N+1 recipe list optimization (2-3 hours)
-14. Migration version tracking (2-3 hours)
+### Phase 3: Growth
+6. Usage limits enforcement (billing infrastructure already exists)
+7. Analytics (Plausible)
+8. Onboarding flow
+9. N+1 recipe list optimization
+10. Migration version tracking
 
 ---
 
@@ -318,23 +335,32 @@ Only cookie is `recipe_session` (httpOnly, functional). Privacy policy states no
 ```
 recipe-engine/
   src/
-    hooks.server.js          — session resolution, bakery context, security headers
+    hooks.server.js          — session resolution, bakery context, subscription gating, security headers
     lib/
       server/
-        db.js                — SQLite schema, CRUD, multi-tenancy (1945 lines)
+        db.js                — SQLite schema, CRUD, multi-tenancy, WebAuthn, subscriptions
         auth.js              — sessions, password hashing, requireRole()
         email.js             — Resend integration, email templates
         oauth.js             — Google OAuth (arctic)
         engine.js            — recipe calculation engine
+        stripe.js            — Stripe SDK singleton
+        billing.js           — subscription management, requireSubscription(), requireEntitlement()
+        plans.js             — plan definitions, subscription status resolution
+        webauthn-config.js   — rpName, rpID, origin for WebAuthn
+        mfa-login.js         — MFA pending cookie management
       components/
         ui/                  — shadcn-svelte components
         app-sidebar.svelte   — navigation, bakery switcher
-        login-form.svelte    — login UI (password + OTP tabs)
+        login-form.svelte    — login UI (password + OTP tabs + Google + passkey)
         signup-form.svelte   — registration UI
     routes/
-      (auth)/                — public: login, signup, forgot/reset password, verify-email
-      (app)/                 — authenticated: recipes, settings, bakery management
+      (auth)/                — public: login, signup, forgot/reset password, verify-email, mfa
+      (app)/                 — authenticated: recipes, settings, bakery management, billing
       (setup)/               — auth-only: bakery creation/selection
+      api/
+        mfa/webauthn/        — 2FA endpoints (enroll, options, verify, credentials)
+        passkey/             — passkey endpoints (login + register, options + verify)
+        stripe/              — checkout + webhook endpoints
       health/                — health check
       terms/, privacy/       — legal pages
   data/
@@ -342,3 +368,13 @@ recipe-engine/
   tests/
     role-enforcement.test.js — 41 RBAC tests
 ```
+
+---
+
+## Related Documentation
+
+- `passkey-auth.md` — full passkey implementation details, design decisions, testing checklist
+- `multitenancy.md` — multi-tenancy architecture and invite flow
+- `recipemanagement.md` — recipe engine spec (sections 1-12)
+- `versioning.md` — recipe versioning spec
+- `accompanied-recipes.md` — accompanied recipes spec

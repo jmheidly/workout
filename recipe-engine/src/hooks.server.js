@@ -18,6 +18,7 @@ const VERIFY_BYPASS_PATHS = [
   '/privacy',
   '/mfa',
   '/api/mfa',
+  '/api/passkey',
 ]
 
 const SUBSCRIPTION_BYPASS_PATHS = [

@@ -1,4 +1,5 @@
 import { error, json } from '@sveltejs/kit'
+import { env } from '$env/dynamic/private'
 import { getStripe } from '$lib/server/stripe.js'
 import { upsertBakerySubscription } from '$lib/server/db.js'
 
@@ -9,7 +10,7 @@ export async function POST({ request }) {
     error(503, 'Stripe not configured')
   }
 
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  const webhookSecret = env.STRIPE_WEBHOOK_SECRET
   if (!webhookSecret) {
     error(503, 'Webhook secret not configured')
   }
