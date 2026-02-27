@@ -10,7 +10,7 @@ export function load({ locals }) {
   // Calculate hydration + totals for each recipe
   const enriched = recipes.map((r) => {
     try {
-      const full = getRecipe(r.id)
+      const full = getRecipe(r.id, locals.bakery.id)
       if (full && full.ingredients?.length > 0) {
         const calc = calculateRecipe(full)
         return {
@@ -56,5 +56,5 @@ export const actions = {
 
     deleteRecipe(id, locals.bakery.id)
     return { success: true }
-  }
+  },
 }

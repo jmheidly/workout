@@ -29,7 +29,28 @@ export function load({ params, locals }) {
   const versionCount = getRecipeVersionCount(params.id)
   const bakeryRecipes = getRecipesByBakery(locals.bakery.id)
 
-  return { recipe, calculated, ingredientLibrary, versionCount, bakeryRecipes, canEdit: locals.bakery.role !== 'viewer' }
+  // Load companion recipe details (ingredients + calculation) for inline display
+  const companionDetails = {}
+  for (const c of recipe.companions || []) {
+    const compRecipe = getRecipe(c.companion_recipe_id, locals.bakery.id)
+    if (!compRecipe) continue
+    let calc = null
+    try { calc = calculateRecipe(compRecipe) } catch {}
+    companionDetails[c.companion_recipe_id] = {
+      ingredients: compRecipe.ingredients || [],
+      calculated: calc,
+    }
+  }
+
+  return {
+    recipe,
+    calculated,
+    ingredientLibrary,
+    versionCount,
+    bakeryRecipes,
+    companionDetails,
+    canEdit: locals.bakery.role !== 'viewer',
+  }
 }
 
 /** @type {import('./$types').Actions} */
@@ -55,10 +76,14 @@ export const actions = {
     }
 
     updateRecipe(params.id, locals.bakery.id, data, locals.user.id, changeNotes)
-    syncIngredientLibrary(locals.user.id, locals.bakery.id, data.ingredients || [])
+    syncIngredientLibrary(
+      locals.user.id,
+      locals.bakery.id,
+      data.ingredients || []
+    )
 
     // Return updated recipe + calculation
-    const recipe = getRecipe(params.id)
+    const recipe = getRecipe(params.id, locals.bakery.id)
     let calculated = null
     try {
       calculated = calculateRecipe(recipe)
@@ -69,7 +94,26 @@ export const actions = {
     const ingredientLibrary = getIngredientLibrary(locals.bakery.id)
     const versionCount = getRecipeVersionCount(params.id)
 
-    return { success: true, recipe, calculated, ingredientLibrary, versionCount }
-  },
+    // Reload companion details
+    const companionDetails = {}
+    for (const c of recipe.companions || []) {
+      const compRecipe = getRecipe(c.companion_recipe_id, locals.bakery.id)
+      if (!compRecipe) continue
+      let calc = null
+      try { calc = calculateRecipe(compRecipe) } catch {}
+      companionDetails[c.companion_recipe_id] = {
+        ingredients: compRecipe.ingredients || [],
+        calculated: calc,
+      }
+    }
 
+    return {
+      success: true,
+      recipe,
+      calculated,
+      ingredientLibrary,
+      versionCount,
+      companionDetails,
+    }
+  },
 }

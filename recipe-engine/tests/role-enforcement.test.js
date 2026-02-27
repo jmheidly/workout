@@ -31,6 +31,7 @@ vi.mock('$lib/server/db.js', () => ({
   deleteIngredientLibraryEntry: vi.fn(),
   syncIngredientLibrary: vi.fn(),
   getRecipeVersions: vi.fn(() => []),
+  getRecipeVersionCount: vi.fn(() => 0),
 }))
 
 vi.mock('$lib/server/engine.js', () => ({
@@ -68,12 +69,21 @@ function makeRequest(entries = {}) {
  * SvelteKit's redirect() throws Redirect: { status, location }
  */
 function isHttpError(e, status) {
-  return !!(e && typeof e === 'object' && e.status === status && e.body?.message)
+  return !!(
+    e &&
+    typeof e === 'object' &&
+    e.status === status &&
+    e.body?.message
+  )
 }
 
 function isRedirect(e) {
   return !!(
-    e && typeof e === 'object' && e.status >= 300 && e.status < 400 && e.location
+    e &&
+    typeof e === 'object' &&
+    e.status >= 300 &&
+    e.status < 400 &&
+    e.location
   )
 }
 
@@ -227,14 +237,6 @@ describe('viewer rejected from all mutation actions (403)', () => {
         recipeDetailModule.actions.save({
           request: makeRequest({ data: '{}', change_notes: '' }),
           params: { id: 'r1' },
-          locals: viewerLocals,
-        }),
-    },
-    {
-      name: 'recipe detail: createMixer',
-      fn: () =>
-        recipeDetailModule.actions.createMixer({
-          request: makeRequest({ data: JSON.stringify({ name: 'Test' }) }),
           locals: viewerLocals,
         }),
     },
