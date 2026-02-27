@@ -10,11 +10,8 @@ import {
   markLoginCodeUsed,
   incrementLoginCodeAttempts,
 } from '$lib/server/db.js'
-import {
-  verifyPassword,
-  createSession,
-  setSessionCookie,
-} from '$lib/server/auth.js'
+import { verifyPassword } from '$lib/server/auth.js'
+import { beginMfaOrCreateSession } from '$lib/server/mfa-login.js'
 import { sendEmail, loginCodeEmail } from '$lib/server/email.js'
 
 // ─── Generic rate limiter ────────────────────────────────────────────────────
@@ -124,9 +121,11 @@ export const actions = {
       })
     }
 
-    const { token, expiresAt } = createSession(user.id)
-    setSessionCookie(cookies, token, expiresAt)
-    redirect(302, getRedirectUrl(user.id, url))
+    beginMfaOrCreateSession({
+      cookies,
+      user,
+      redirectTo: getRedirectUrl(user.id, url),
+    })
   },
 
   sendCode: async ({ request }) => {
@@ -215,8 +214,10 @@ export const actions = {
     }
 
     markLoginCodeUsed(record.id)
-    const { token, expiresAt } = createSession(user.id)
-    setSessionCookie(cookies, token, expiresAt)
-    redirect(302, getRedirectUrl(user.id, url))
+    beginMfaOrCreateSession({
+      cookies,
+      user,
+      redirectTo: getRedirectUrl(user.id, url),
+    })
   },
 }

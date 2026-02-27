@@ -26,11 +26,14 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.2.2",
+    "@simplewebauthn/server": "^13.2.3",
     "arctic": "^3.7.0",
     "better-sqlite3": "^12.6.2",
     "bits-ui": "^1.0.0-next.98",
     "clsx": "^2.1.1",
     "resend": "^6.9.2",
+    "stripe": "^20.4.0",
     "svelte-sonner": "^1.0.7",
     "tailwind-merge": "^3.5.0"
   }

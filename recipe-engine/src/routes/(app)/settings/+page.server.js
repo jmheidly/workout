@@ -4,6 +4,9 @@ import {
   updateUser,
   updateUserPassword,
   deleteUser,
+  getUserMfaKeys,
+  countUserMfaKeys,
+  setUserMfaEnabled,
 } from '$lib/server/db.js'
 import {
   hashPassword,
@@ -16,6 +19,7 @@ import {
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
   const full = getUserByEmail(locals.user.email)
+  const mfaKeys = getUserMfaKeys(locals.user.id)
   return {
     profile: {
       name: locals.user.name || '',
@@ -23,6 +27,12 @@ export function load({ locals }) {
       hasPassword: !!full?.password_hash,
       hasGoogle: !!full?.google_id,
     },
+    mfaEnabled: full?.mfa_enabled === 1,
+    mfaKeys: mfaKeys.map((k) => ({
+      id: k.id,
+      createdAt: k.created_at,
+      lastUsedAt: k.last_used_at,
+    })),
   }
 }
 
@@ -68,6 +78,25 @@ export const actions = {
     const hashed = hashPassword(newPassword)
     updateUserPassword(locals.user.id, hashed)
     return { passwordSuccess: true }
+  },
+
+  toggleMfa: async ({ locals }) => {
+    const full = getUserByEmail(locals.user.email)
+    if (!full) return fail(400, { mfaError: 'User not found' })
+
+    if (full.mfa_enabled) {
+      setUserMfaEnabled(locals.user.id, 0)
+      return { mfaSuccess: 'Two-factor authentication disabled.' }
+    }
+
+    if (countUserMfaKeys(locals.user.id) === 0) {
+      return fail(400, {
+        mfaError: 'Add a security key before enabling 2FA.',
+      })
+    }
+
+    setUserMfaEnabled(locals.user.id, 1)
+    return { mfaSuccess: 'Two-factor authentication enabled.' }
   },
 
   deleteAccount: async ({ locals, cookies }) => {

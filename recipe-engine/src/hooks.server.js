@@ -1,6 +1,12 @@
 import { redirect } from '@sveltejs/kit'
 import { validateSession, SESSION_COOKIE } from '$lib/server/auth.js'
-import { getUserById, getBakeryMember, getBakery } from '$lib/server/db.js'
+import {
+  getUserById,
+  getBakeryMember,
+  getBakery,
+  getBakerySubscription,
+} from '$lib/server/db.js'
+import { getSubscriptionStatus } from '$lib/server/plans.js'
 
 const VERIFY_BYPASS_PATHS = [
   '/verify-email',
@@ -10,6 +16,23 @@ const VERIFY_BYPASS_PATHS = [
   '/health',
   '/terms',
   '/privacy',
+  '/mfa',
+  '/api/mfa',
+]
+
+const SUBSCRIPTION_BYPASS_PATHS = [
+  '/bakeries/settings/billing',
+  '/api/stripe',
+  '/login',
+  '/logout',
+  '/signup',
+  '/health',
+  '/terms',
+  '/privacy',
+  '/verify-email',
+  '/bakeries',
+  '/invite',
+  '/settings',
 ]
 
 /** @type {import('@sveltejs/kit').Handle} */
@@ -47,6 +70,26 @@ export async function handle({ event, resolve }) {
         )
         if (!allowed) {
           redirect(302, '/verify-email')
+        }
+      }
+
+      // Gate inactive subscriptions → redirect to billing
+      if (event.locals.bakery) {
+        const path = event.url.pathname
+        const bypassed = SUBSCRIPTION_BYPASS_PATHS.some(
+          (p) => path === p || path.startsWith(p + '/')
+        )
+        if (!bypassed) {
+          const sub = getBakerySubscription(event.locals.bakery.id)
+          const status = getSubscriptionStatus(sub)
+          event.locals.subscription = status
+          if (!status.active) {
+            redirect(302, '/bakeries/settings/billing')
+          }
+        } else {
+          // Still attach subscription for bypassed pages that might need it
+          const sub = getBakerySubscription(event.locals.bakery.id)
+          event.locals.subscription = getSubscriptionStatus(sub)
         }
       }
     }

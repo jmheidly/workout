@@ -197,6 +197,54 @@ function initSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_recipe_templates_bakery ON recipe_templates(bakery_id);
     CREATE INDEX IF NOT EXISTS idx_recipe_templates_recipe ON recipe_templates(recipe_id);
+
+    CREATE TABLE IF NOT EXISTS bakery_subscriptions (
+      id TEXT PRIMARY KEY,
+      bakery_id TEXT NOT NULL UNIQUE REFERENCES bakeries(id) ON DELETE CASCADE,
+      stripe_customer_id TEXT UNIQUE,
+      stripe_subscription_id TEXT UNIQUE,
+      stripe_price_id TEXT,
+      plan TEXT NOT NULL DEFAULT 'trial',
+      status TEXT NOT NULL DEFAULT 'trialing',
+      trial_ends_at INTEGER,
+      current_period_end INTEGER,
+      cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_bsub_bakery ON bakery_subscriptions(bakery_id);
+    CREATE INDEX IF NOT EXISTS idx_bsub_stripe_cust ON bakery_subscriptions(stripe_customer_id);
+
+    CREATE TABLE IF NOT EXISTS webauthn_credentials (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key BLOB NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT,
+      kind TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
+
+    CREATE TABLE IF NOT EXISTS mfa_pending (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      redirect_to TEXT NOT NULL,
+      challenge TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_pending_expires ON mfa_pending(expires_at);
+
+    CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      challenge TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user ON webauthn_challenges(user_id);
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -227,6 +275,8 @@ function initSchema(db) {
     'ALTER TABLE recipe_companions ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL',
     'ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER',
     'ALTER TABLE users ADD COLUMN email_verified_at TEXT',
+    'ALTER TABLE users ADD COLUMN trial_bakery_created INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0',
   ]
   for (const sql of migrations) {
     try {
@@ -241,6 +291,34 @@ function initSchema(db) {
     db.exec(
       "UPDATE users SET email_verified_at = datetime('now') WHERE email_verified_at IS NULL"
     )
+  } catch {
+    // Safe to ignore
+  }
+
+  // Backfill: mark all existing users as having used their trial
+  try {
+    db.exec('UPDATE users SET trial_bakery_created = 1 WHERE trial_bakery_created = 0')
+  } catch {
+    // Safe to ignore — column may not exist yet
+  }
+
+  // Backfill: create trial subscriptions for existing bakeries without one
+  try {
+    const trialEnd = Math.floor(Date.now() / 1000) + 14 * 24 * 60 * 60
+    const bakeriesWithoutSub = db
+      .prepare(
+        `SELECT b.id FROM bakeries b
+         LEFT JOIN bakery_subscriptions bs ON bs.bakery_id = b.id
+         WHERE bs.id IS NULL`
+      )
+      .all()
+    const insertSub = db.prepare(
+      `INSERT INTO bakery_subscriptions (id, bakery_id, plan, status, trial_ends_at)
+       VALUES (?, ?, 'trial', 'trialing', ?)`
+    )
+    for (const b of bakeriesWithoutSub) {
+      insertSub.run(generateId(), b.id, trialEnd)
+    }
   } catch {
     // Safe to ignore
   }
@@ -372,13 +450,13 @@ export function createUser(email, passwordHash, name) {
 
 /**
  * @param {string} email
- * @returns {{ id: string, email: string, name: string | null, password_hash: string, google_id: string | null, email_verified_at: string | null } | undefined}
+ * @returns {{ id: string, email: string, name: string | null, password_hash: string, google_id: string | null, email_verified_at: string | null, mfa_enabled: number } | undefined}
  */
 export function getUserByEmail(email) {
   const db = getDb()
   return db
     .prepare(
-      'SELECT id, email, name, password_hash, google_id, email_verified_at FROM users WHERE email = ?'
+      'SELECT id, email, name, password_hash, google_id, email_verified_at, mfa_enabled FROM users WHERE email = ?'
     )
     .get(email)
 }
@@ -1930,6 +2008,169 @@ export function updateUserPassword(userId, passwordHash) {
   )
 }
 
+// ─── Subscriptions ────────────────────────────────────────────────────────────
+
+/** @param {string} bakeryId */
+export function getBakerySubscription(bakeryId) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM bakery_subscriptions WHERE bakery_id = ?')
+    .get(bakeryId)
+}
+
+/** @param {string} stripeCustomerId */
+export function getBakerySubscriptionByStripeCustomer(stripeCustomerId) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM bakery_subscriptions WHERE stripe_customer_id = ?')
+    .get(stripeCustomerId)
+}
+
+/**
+ * @param {string} bakeryId
+ * @param {{ plan?: string, status?: string, trial_ends_at?: number, stripe_customer_id?: string, stripe_subscription_id?: string, stripe_price_id?: string, current_period_end?: number, cancel_at_period_end?: number }} data
+ */
+export function createBakerySubscription(bakeryId, data) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare(
+    `INSERT INTO bakery_subscriptions (id, bakery_id, plan, status, trial_ends_at, stripe_customer_id, stripe_subscription_id, stripe_price_id, current_period_end, cancel_at_period_end)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    bakeryId,
+    data.plan || 'trial',
+    data.status || 'trialing',
+    data.trial_ends_at ?? null,
+    data.stripe_customer_id ?? null,
+    data.stripe_subscription_id ?? null,
+    data.stripe_price_id ?? null,
+    data.current_period_end ?? null,
+    data.cancel_at_period_end ?? 0
+  )
+  return id
+}
+
+/**
+ * @param {string} bakeryId
+ * @param {object} patch
+ */
+export function upsertBakerySubscription(bakeryId, patch) {
+  const db = getDb()
+  const existing = getBakerySubscription(bakeryId)
+  if (!existing) {
+    return createBakerySubscription(bakeryId, patch)
+  }
+  const sets = []
+  const values = []
+  for (const [key, val] of Object.entries(patch)) {
+    if (val !== undefined) {
+      sets.push(`${key} = ?`)
+      values.push(val)
+    }
+  }
+  if (sets.length === 0) return existing.id
+  sets.push("updated_at = datetime('now')")
+  values.push(bakeryId)
+  db.prepare(
+    `UPDATE bakery_subscriptions SET ${sets.join(', ')} WHERE bakery_id = ?`
+  ).run(...values)
+  return existing.id
+}
+
+/** @param {string} userId */
+export function hasUserUsedTrial(userId) {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT trial_bakery_created FROM users WHERE id = ?')
+    .get(userId)
+  return row?.trial_bakery_created === 1
+}
+
+/** @param {string} userId */
+export function markUserTrialUsed(userId) {
+  const db = getDb()
+  db.prepare('UPDATE users SET trial_bakery_created = 1 WHERE id = ?').run(
+    userId
+  )
+}
+
+/**
+ * Create a bakery with subscription in a single transaction.
+ * Grants trial if user hasn't used it yet, otherwise creates expired subscription.
+ * @param {string} name
+ * @param {string} slug
+ * @param {string} userId
+ * @returns {{ bakery: { id: string, name: string, slug: string, created_by: string }, subscriptionId: string }}
+ */
+export function createBakeryWithSubscription(name, slug, userId) {
+  const db = getDb()
+  const bakeryId = generateId()
+  const subId = generateId()
+  const usedTrial = hasUserUsedTrial(userId)
+  const now = Math.floor(Date.now() / 1000)
+
+  const txn = db.transaction(() => {
+    db.prepare(
+      'INSERT INTO bakeries (id, name, slug, created_by) VALUES (?, ?, ?, ?)'
+    ).run(bakeryId, name, slug, userId)
+
+    db.prepare(
+      'INSERT INTO bakery_members (id, bakery_id, user_id, role) VALUES (?, ?, ?, ?)'
+    ).run(generateId(), bakeryId, userId, 'owner')
+
+    if (!usedTrial) {
+      const trialEnd = now + 14 * 24 * 60 * 60
+      db.prepare(
+        `INSERT INTO bakery_subscriptions (id, bakery_id, plan, status, trial_ends_at)
+         VALUES (?, ?, 'trial', 'trialing', ?)`
+      ).run(subId, bakeryId, trialEnd)
+      db.prepare(
+        'UPDATE users SET trial_bakery_created = 1 WHERE id = ?'
+      ).run(userId)
+    } else {
+      db.prepare(
+        `INSERT INTO bakery_subscriptions (id, bakery_id, plan, status, trial_ends_at)
+         VALUES (?, ?, 'trial', 'canceled', ?)`
+      ).run(subId, bakeryId, now)
+    }
+
+    db.prepare('UPDATE users SET active_bakery_id = ? WHERE id = ?').run(
+      bakeryId,
+      userId
+    )
+  })
+
+  txn()
+  return {
+    bakery: { id: bakeryId, name, slug, created_by: userId },
+    subscriptionId: subId,
+  }
+}
+
+/**
+ * Count active members + pending (non-expired) invitations for a bakery.
+ * @param {string} bakeryId
+ * @returns {{ members: number, pendingInvites: number, total: number }}
+ */
+export function getBakeryMemberCount(bakeryId) {
+  const db = getDb()
+  const memberCount = db
+    .prepare('SELECT COUNT(*) as count FROM bakery_members WHERE bakery_id = ?')
+    .get(bakeryId).count
+  const inviteCount = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM invitations
+       WHERE bakery_id = ? AND accepted_at IS NULL AND expires_at > datetime('now')`
+    )
+    .get(bakeryId).count
+  return {
+    members: memberCount,
+    pendingInvites: inviteCount,
+    total: memberCount + inviteCount,
+  }
+}
+
 /**
  * Delete a user and cascade-clean all related data.
  * Bakeries where the user is the sole owner are also deleted.
@@ -1971,4 +2212,135 @@ export function deleteUser(userId) {
     db.prepare('DELETE FROM users WHERE id = ?').run(userId)
   })
   txn()
+}
+
+// ─── WebAuthn / MFA ─────────────────────────────────────────────────────────
+
+export function getUserMfaKeys(userId) {
+  const db = getDb()
+  return db
+    .prepare(
+      "SELECT id, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? AND kind = 'mfa_key'"
+    )
+    .all(userId)
+}
+
+export function getWebAuthnCredential(id) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM webauthn_credentials WHERE id = ?')
+    .get(id)
+}
+
+export function createWebAuthnCredential({
+  id,
+  userId,
+  publicKey,
+  counter,
+  transports,
+  kind,
+}) {
+  const db = getDb()
+  db.prepare(
+    'INSERT INTO webauthn_credentials (id, user_id, public_key, counter, transports, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, userId, publicKey, counter, transports || null, kind, Date.now())
+}
+
+export function updateWebAuthnCredentialCounter(id, counter, lastUsedAt) {
+  const db = getDb()
+  db.prepare(
+    'UPDATE webauthn_credentials SET counter = ?, last_used_at = ? WHERE id = ?'
+  ).run(counter, lastUsedAt, id)
+}
+
+export function deleteWebAuthnCredential(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM webauthn_credentials WHERE id = ?').run(id)
+}
+
+export function countUserMfaKeys(userId) {
+  const db = getDb()
+  return db
+    .prepare(
+      "SELECT COUNT(*) as count FROM webauthn_credentials WHERE user_id = ? AND kind = 'mfa_key'"
+    )
+    .get(userId).count
+}
+
+export function setUserMfaEnabled(userId, enabled) {
+  const db = getDb()
+  db.prepare('UPDATE users SET mfa_enabled = ? WHERE id = ?').run(
+    enabled ? 1 : 0,
+    userId
+  )
+}
+
+export function createMfaPending({ id, userId, redirectTo, expiresAt }) {
+  const db = getDb()
+  db.prepare(
+    'INSERT INTO mfa_pending (id, user_id, redirect_to, expires_at) VALUES (?, ?, ?, ?)'
+  ).run(id, userId, redirectTo, expiresAt)
+}
+
+export function getMfaPending(id) {
+  const db = getDb()
+  return db.prepare('SELECT * FROM mfa_pending WHERE id = ?').get(id)
+}
+
+export function updateMfaPendingChallenge(id, challenge) {
+  const db = getDb()
+  db.prepare('UPDATE mfa_pending SET challenge = ? WHERE id = ?').run(
+    challenge,
+    id
+  )
+}
+
+export function incrementMfaPendingAttempts(id) {
+  const db = getDb()
+  const row = db
+    .prepare(
+      'UPDATE mfa_pending SET attempts = attempts + 1 WHERE id = ? RETURNING attempts'
+    )
+    .get(id)
+  return row?.attempts ?? 0
+}
+
+export function deleteMfaPending(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM mfa_pending WHERE id = ?').run(id)
+}
+
+export function deleteExpiredMfaPending() {
+  const db = getDb()
+  db.prepare('DELETE FROM mfa_pending WHERE expires_at < ?').run(Date.now())
+}
+
+export function createWebAuthnChallenge({
+  id,
+  userId,
+  purpose,
+  challenge,
+  expiresAt,
+}) {
+  const db = getDb()
+  db.prepare(
+    'INSERT INTO webauthn_challenges (id, user_id, purpose, challenge, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, userId, purpose, challenge, expiresAt)
+}
+
+export function getWebAuthnChallenge(id) {
+  const db = getDb()
+  return db.prepare('SELECT * FROM webauthn_challenges WHERE id = ?').get(id)
+}
+
+export function deleteWebAuthnChallenge(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM webauthn_challenges WHERE id = ?').run(id)
+}
+
+export function deleteExpiredWebAuthnChallenges() {
+  const db = getDb()
+  db.prepare('DELETE FROM webauthn_challenges WHERE expires_at < ?').run(
+    Date.now()
+  )
 }
