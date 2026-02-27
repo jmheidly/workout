@@ -337,6 +337,36 @@
               {/each}
             </div>
 
+            <!-- Process Steps -->
+            {#if (side.snapshot.process_steps || []).length > 0}
+              <Separator class="my-2" />
+              <div class="space-y-1">
+                <p class="text-xs font-medium text-muted-foreground">Process Steps</p>
+                {#each (side.snapshot.process_steps || []).sort((a, b) => a.sort_order - b.sort_order) as step}
+                  {@const isStepChanged = changes?.some(
+                    (c) => c.step_id === step.id && (c.type === 'step_modified' || c.type === 'step_added')
+                  )}
+                  {@const isStepRemoved = side === cmp.a && changes?.some(
+                    (c) => c.type === 'step_removed' && c.step_id === step.id
+                  )}
+                  <div
+                    class="flex items-center justify-between gap-2 rounded px-1.5 py-0.5 text-sm {isStepChanged
+                      ? 'bg-yellow-50'
+                      : ''} {isStepRemoved ? 'bg-red-50 line-through' : ''}"
+                  >
+                    <div class="flex items-center gap-2">
+                      <Badge variant="outline" class="text-[10px] shrink-0">{step.stage}</Badge>
+                      <span class="truncate">{step.title}</span>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      {#if step.duration_min}<span class="text-xs tabular-nums text-muted-foreground">{step.duration_min}m</span>{/if}
+                      {#if step.temperature}<span class="text-xs tabular-nums text-muted-foreground">{step.temperature}°C</span>{/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
             <!-- Companions -->
             {#if (side.snapshot.companions || []).length > 0}
               <Separator class="my-2" />
