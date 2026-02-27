@@ -113,13 +113,13 @@ CREATE TABLE invitations (
 
 ### 3.2 Modified Columns
 
-| Table | Added Column | Purpose |
-|-------|-------------|---------|
-| `users` | `active_bakery_id TEXT REFERENCES bakeries(id)` | Current working bakery |
-| `recipes` | `bakery_id TEXT REFERENCES bakeries(id)` | Tenant scope |
-| `recipes` | `version INTEGER NOT NULL DEFAULT 1` | Auto-incremented on save |
-| `mixer_profiles` | `bakery_id TEXT REFERENCES bakeries(id)` | Tenant scope |
-| `ingredient_library` | `bakery_id TEXT REFERENCES bakeries(id)` | Tenant scope |
+| Table                | Added Column                                    | Purpose                  |
+| -------------------- | ----------------------------------------------- | ------------------------ |
+| `users`              | `active_bakery_id TEXT REFERENCES bakeries(id)` | Current working bakery   |
+| `recipes`            | `bakery_id TEXT REFERENCES bakeries(id)`        | Tenant scope             |
+| `recipes`            | `version INTEGER NOT NULL DEFAULT 1`            | Auto-incremented on save |
+| `mixer_profiles`     | `bakery_id TEXT REFERENCES bakeries(id)`        | Tenant scope             |
+| `ingredient_library` | `bakery_id TEXT REFERENCES bakeries(id)`        | Tenant scope             |
 
 **Note:** The `bakery_id` foreign keys on domain tables (`recipes`, `mixer_profiles`, `ingredient_library`) do NOT use `ON DELETE CASCADE`. Bakery deletion is handled in application code (see §4.3). The `user_id` columns remain on all domain tables for attribution — they are NOT removed.
 
@@ -160,6 +160,7 @@ All wrapped in a single transaction.
 ### 4.1 Creation
 
 Bakeries are created via:
+
 - Auto-creation on signup (see §2.1)
 - Manual creation at `/bakeries/new`
 
@@ -189,12 +190,12 @@ Application-level deletion is used because the `bakery_id` foreign keys on domai
 
 ### 5.1 Role Hierarchy
 
-| Role | View data | Create/Edit | Delete | Manage members | Bakery settings | Delete bakery |
-|------|-----------|-------------|--------|----------------|-----------------|---------------|
-| **owner** | Yes | Yes | Yes | Yes (all) | Yes | Yes |
-| **admin** | Yes | Yes | Yes | Yes (members/viewers only) | Yes | No |
-| **member** | Yes | Yes | Yes | No | No | No |
-| **viewer** | Yes | No | No | No | No | No |
+| Role       | View data | Create/Edit | Delete | Manage members             | Bakery settings | Delete bakery |
+| ---------- | --------- | ----------- | ------ | -------------------------- | --------------- | ------------- |
+| **owner**  | Yes       | Yes         | Yes    | Yes (all)                  | Yes             | Yes           |
+| **admin**  | Yes       | Yes         | Yes    | Yes (members/viewers only) | Yes             | No            |
+| **member** | Yes       | Yes         | Yes    | No                         | No              | No            |
+| **viewer** | Yes       | No          | No     | No                         | No              | No            |
 
 ### 5.2 Role Change Rules
 
@@ -205,6 +206,7 @@ Application-level deletion is used because the `bakery_id` foreign keys on domai
 ### 5.3 Member Removal
 
 When a user is removed from a bakery:
+
 - Their `active_bakery_id` is cleared if it points to the removed bakery (handled in `removeBakeryMember()`)
 - Recipes, mixer profiles, and ingredients they created remain in the bakery — domain data belongs to the bakery, not the user
 - On next request, the middleware (§8.1) finds no bakery context and the `(app)` layout redirects to `/bakeries` for selection
@@ -212,6 +214,7 @@ When a user is removed from a bakery:
 ### 5.4 Enforcement
 
 Role checks use `requireRole(locals, ...allowedRoles)` from `auth.js`. This throws:
+
 - `redirect(303, '/bakeries')` if no bakery context
 - `error(403, 'Insufficient permissions')` if role is insufficient
 
@@ -219,15 +222,16 @@ Role checks use `requireRole(locals, ...allowedRoles)` from `auth.js`. This thro
 
 All domain route mutation actions enforce `requireRole(locals, 'owner', 'admin', 'member')`:
 
-| Route | Gated Actions |
-|-------|--------------|
-| `recipes/+page.server.js` | `delete` |
-| `recipes/new/+page.server.js` | `default` action + `load` (viewers can't access create form) |
-| `recipes/[id]/+page.server.js` | `save`, `createMixer` |
-| `mixers/+page.server.js` | `create`, `update`, `delete` |
-| `inventory/+page.server.js` | `create`, `update`, `delete` |
+| Route                          | Gated Actions                                                |
+| ------------------------------ | ------------------------------------------------------------ |
+| `recipes/+page.server.js`      | `delete`                                                     |
+| `recipes/new/+page.server.js`  | `default` action + `load` (viewers can't access create form) |
+| `recipes/[id]/+page.server.js` | `save`, `createMixer`                                        |
+| `mixers/+page.server.js`       | `create`, `update`, `delete`                                 |
+| `inventory/+page.server.js`    | `create`, `update`, `delete`                                 |
 
 **Read-only routes (no gating needed):**
+
 - `recipes/[id]/production/+page.server.js` — load only, no mutations
 - `recipes/[id]/versions/+page.server.js` — load only, no mutations. If a "restore from version" action is added later, gate it as a mutation.
 
@@ -242,6 +246,7 @@ All domain route mutation actions enforce `requireRole(locals, 'owner', 'admin',
 ### 6.1 Creating Invitations
 
 Owners and admins create invitations at `/bakeries/settings/members`. An invitation specifies:
+
 - **email** — the invitee's email address
 - **role** — the role to assign on acceptance (member or admin; owner promotion is manual)
 - **token** — a UUID v4, used as the invite link identifier
@@ -254,6 +259,7 @@ Constraint: `UNIQUE(bakery_id, email)` prevents duplicate invitations.
 Format: `/invite/{token}`
 
 The link is shown in two places:
+
 - **On creation** — a green banner with the URL and a Copy button appears immediately after inviting
 - **In the pending invitations list** — each pending invitation displays its full link with a Copy button, so admins can retrieve it at any time
 
@@ -285,13 +291,13 @@ If a new user signs up with an email that has a pending invitation (and no `?inv
 
 The `?invite={token}` query parameter is preserved through the entire auth flow:
 
-| Step | Mechanism |
-|------|-----------|
-| Login page → signup link | `signup-form.svelte` appends `?invite=` to `/signup` href |
-| Signup page → login link | `login-form.svelte` appends `?invite=` to `/login` href |
-| Login/signup → Google OAuth | `login-form.svelte` / `signup-form.svelte` append `?invite=` to `/login/google` href |
-| Google OAuth start → callback | Stored in `oauth_invite_token` cookie (10-min expiry) |
-| Post-auth redirect | All auth endpoints check for invite token and redirect to `/invite/{token}` if present |
+| Step                          | Mechanism                                                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| Login page → signup link      | `signup-form.svelte` appends `?invite=` to `/signup` href                              |
+| Signup page → login link      | `login-form.svelte` appends `?invite=` to `/login` href                                |
+| Login/signup → Google OAuth   | `login-form.svelte` / `signup-form.svelte` append `?invite=` to `/login/google` href   |
+| Google OAuth start → callback | Stored in `oauth_invite_token` cookie (10-min expiry)                                  |
+| Post-auth redirect            | All auth endpoints check for invite token and redirect to `/invite/{token}` if present |
 
 ### 7.2 Post-Auth Bakery Resolution
 
@@ -316,6 +322,7 @@ Bakery context resolution is the mechanism that connects a logged-in user to the
 The hook runs on **every request** before any route loads. It has two phases:
 
 **Phase 1 — Session validation:**
+
 1. Read `recipe_session` cookie from the request
 2. Hash the token with SHA256 to get the session ID
 3. Look up the session in the DB; reject if missing or expired
@@ -324,6 +331,7 @@ The hook runs on **every request** before any route loads. It has two phases:
 6. Set `event.locals.user = { id, email, name }` and `event.locals.session`
 
 **Phase 2 — Bakery context resolution:**
+
 1. Re-fetch the full user record to get `active_bakery_id`
 2. Call `getBakeryMember(active_bakery_id, user.id)` — verifies the user is still a member (they could have been removed since last request)
 3. Call `getBakery(active_bakery_id)` — fetches bakery name/slug
@@ -354,13 +362,14 @@ Route layout load()
 
 The three layout groups form a cascading permission model. Each layout's `load()` function checks `locals` and redirects if requirements aren't met:
 
-| Layout Group | Auth Required | Bakery Required | Guard Logic | Use Case |
-|-------------|--------------|----------------|-------------|----------|
-| `(auth)` | No | No | No checks — public routes | Login, signup, OAuth callbacks |
-| `(setup)` | Yes | No | Redirects to `/login` if `!locals.user` | Bakery selection/creation, invite acceptance |
-| `(app)` | Yes | Yes | Redirects to `/login` if `!locals.user`, then to `/bakeries` if `!locals.bakery` | All app functionality (recipes, mixers, inventory, settings) |
+| Layout Group | Auth Required | Bakery Required | Guard Logic                                                                      | Use Case                                                     |
+| ------------ | ------------- | --------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `(auth)`     | No            | No              | No checks — public routes                                                        | Login, signup, OAuth callbacks                               |
+| `(setup)`    | Yes           | No              | Redirects to `/login` if `!locals.user`                                          | Bakery selection/creation, invite acceptance                 |
+| `(app)`      | Yes           | Yes             | Redirects to `/login` if `!locals.user`, then to `/bakeries` if `!locals.bakery` | All app functionality (recipes, mixers, inventory, settings) |
 
 **Why two separate checks in `(app)`?** A user can be authenticated but have no bakery context if:
+
 - Their `active_bakery_id` is null (first login after being removed from all bakeries)
 - They were removed from their active bakery between requests
 - The bakery was deleted
@@ -370,6 +379,7 @@ In all cases, the `(app)` layout sends them to `/bakeries` (a `(setup)` route) w
 ### 8.3 How `locals` Flows to Routes
 
 SvelteKit's `locals` object is set once in the hook and is available to:
+
 - **Layout `load()` functions** — for guard checks and passing `user`/`bakery` to the client
 - **Page `load()` functions** — for data queries scoped by `locals.bakery.id`
 - **Form actions** — for mutation authorization via `requireRole(locals, ...)`
@@ -384,13 +394,13 @@ The `(app)` layout returns `{ user: locals.user, bakery: locals.bakery }` from i
 
 All domain data queries use `bakery_id` from `locals.bakery.id`. Create functions take both `userId` (attribution) and `bakeryId` (tenant scope):
 
-| Operation | Function Signature | Scoping |
-|-----------|-------------------|---------|
-| List recipes | `getRecipesByBakery(bakeryId)` | `WHERE bakery_id = ?` |
-| Get recipe | `getRecipe(id, bakeryId)` | `WHERE id = ? AND bakery_id = ?` |
-| Create recipe | `createRecipe(userId, bakeryId, data)` | `INSERT ... user_id, bakery_id` |
-| Update recipe | `updateRecipe(id, bakeryId, data)` | `WHERE id = ? AND bakery_id = ?` |
-| Delete recipe | `deleteRecipe(id, bakeryId)` | `WHERE id = ? AND bakery_id = ?` |
+| Operation     | Function Signature                     | Scoping                          |
+| ------------- | -------------------------------------- | -------------------------------- |
+| List recipes  | `getRecipesByBakery(bakeryId)`         | `WHERE bakery_id = ?`            |
+| Get recipe    | `getRecipe(id, bakeryId)`              | `WHERE id = ? AND bakery_id = ?` |
+| Create recipe | `createRecipe(userId, bakeryId, data)` | `INSERT ... user_id, bakery_id`  |
+| Update recipe | `updateRecipe(id, bakeryId, data)`     | `WHERE id = ? AND bakery_id = ?` |
+| Delete recipe | `deleteRecipe(id, bakeryId)`           | `WHERE id = ? AND bakery_id = ?` |
 
 Same pattern applies to mixer_profiles and ingredient_library. `syncIngredientLibrary(userId, bakeryId, ingredients)` takes both for the same reason — `userId` for the `user_id` attribution column, `bakeryId` for tenant scoping and the UNIQUE constraint.
 
@@ -407,10 +417,10 @@ This means even if an attacker obtains a valid record ID from another bakery, mu
 
 ### 9.3 Attribution vs Scoping
 
-| Column | Purpose | Used for queries? |
-|--------|---------|-------------------|
-| `user_id` | Who created the record (audit trail) | No — for attribution only |
-| `bakery_id` | Which bakery owns the record (tenant scope) | Yes — all reads/writes |
+| Column      | Purpose                                     | Used for queries?         |
+| ----------- | ------------------------------------------- | ------------------------- |
+| `user_id`   | Who created the record (audit trail)        | No — for attribution only |
+| `bakery_id` | Which bakery owns the record (tenant scope) | Yes — all reads/writes    |
 
 ---
 
@@ -418,26 +428,26 @@ This means even if an attacker obtains a valid record ID from another bakery, mu
 
 ### 10.1 New Routes
 
-| Route | Layout | Purpose |
-|-------|--------|---------|
-| `/bakeries` | `(setup)` | List user's bakeries, switch active |
-| `/bakeries/new` | `(setup)` | Create a new bakery |
-| `/bakeries/settings` | `(app)` | Update bakery name/slug, delete bakery |
-| `/bakeries/settings/members` | `(app)` | Manage members, create/cancel invitations |
-| `/invite/[token]` | none | Invitation acceptance (standalone page) |
+| Route                        | Layout    | Purpose                                   |
+| ---------------------------- | --------- | ----------------------------------------- |
+| `/bakeries`                  | `(setup)` | List user's bakeries, switch active       |
+| `/bakeries/new`              | `(setup)` | Create a new bakery                       |
+| `/bakeries/settings`         | `(app)`   | Update bakery name/slug, delete bakery    |
+| `/bakeries/settings/members` | `(app)`   | Manage members, create/cancel invitations |
+| `/invite/[token]`            | none      | Invitation acceptance (standalone page)   |
 
 ### 10.2 Modified Routes
 
 All existing `(app)` routes changed from `locals.user.id` to `locals.bakery.id` for data queries:
 
-| Route | Change |
-|-------|--------|
-| `recipes/+page.server.js` | `getRecipesByBakery(bakeryId)`, `deleteRecipe(id, bakeryId)` |
-| `recipes/new/+page.server.js` | `createRecipe(userId, bakeryId, data)`, `getMixerProfiles(bakeryId)` |
-| `recipes/[id]/+page.server.js` | `getRecipe(id, bakeryId)`, `updateRecipe(id, bakeryId, data)`, `syncIngredientLibrary(userId, bakeryId, ...)` |
-| `recipes/[id]/production/+page.server.js` | `getRecipe(id, bakeryId)` |
-| `mixers/+page.server.js` | `getMixerProfiles(bakeryId)`, `createMixerProfile(userId, bakeryId, data)`, `updateMixerProfile(id, bakeryId, data)`, `deleteMixerProfile(id, bakeryId)` |
-| `inventory/+page.server.js` | `getIngredientLibrary(bakeryId)`, `createIngredientLibraryEntry(userId, bakeryId, ...)`, `updateIngredientLibraryEntry(id, bakeryId, ...)`, `deleteIngredientLibraryEntry(id, bakeryId)` |
+| Route                                     | Change                                                                                                                                                                                   |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recipes/+page.server.js`                 | `getRecipesByBakery(bakeryId)`, `deleteRecipe(id, bakeryId)`                                                                                                                             |
+| `recipes/new/+page.server.js`             | `createRecipe(userId, bakeryId, data)`, `getMixerProfiles(bakeryId)`                                                                                                                     |
+| `recipes/[id]/+page.server.js`            | `getRecipe(id, bakeryId)`, `updateRecipe(id, bakeryId, data)`, `syncIngredientLibrary(userId, bakeryId, ...)`                                                                            |
+| `recipes/[id]/production/+page.server.js` | `getRecipe(id, bakeryId)`                                                                                                                                                                |
+| `mixers/+page.server.js`                  | `getMixerProfiles(bakeryId)`, `createMixerProfile(userId, bakeryId, data)`, `updateMixerProfile(id, bakeryId, data)`, `deleteMixerProfile(id, bakeryId)`                                 |
+| `inventory/+page.server.js`               | `getIngredientLibrary(bakeryId)`, `createIngredientLibraryEntry(userId, bakeryId, ...)`, `updateIngredientLibraryEntry(id, bakeryId, ...)`, `deleteIngredientLibraryEntry(id, bakeryId)` |
 
 ### 10.3 Sidebar
 
@@ -449,14 +459,14 @@ The app sidebar shows the active bakery name in the header. The header links to 
 
 The seed script (`scripts/seed.mjs`) creates:
 
-| Entity | Details |
-|--------|---------|
-| Demo user (owner) | `demo@example.com` / `demo123`, name "Demo Baker" |
-| Viewer user | `viewer@example.com` / `viewer123`, name "Demo Viewer" |
-| Demo bakery | name "Demo Bakery", slug "demo", created_by demo user |
-| Bakery members | demo user as owner, viewer user as viewer |
-| Mixer profiles | 3 profiles (Caplain, Haussler, Bhk) scoped to Demo Bakery |
-| Recipes | 4 recipes (Panettone, French Baguette, Country Sourdough Batard, Brioche) scoped to Demo Bakery |
+| Entity            | Details                                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| Demo user (owner) | `demo@example.com` / `demo123`, name "Demo Baker"                                               |
+| Viewer user       | `viewer@example.com` / `viewer123`, name "Demo Viewer"                                          |
+| Demo bakery       | name "Demo Bakery", slug "demo", created_by demo user                                           |
+| Bakery members    | demo user as owner, viewer user as viewer                                                       |
+| Mixer profiles    | 3 profiles (Caplain, Haussler, Bhk) scoped to Demo Bakery                                       |
+| Recipes           | 4 recipes (Panettone, French Baguette, Country Sourdough Batard, Brioche) scoped to Demo Bakery |
 
 Run: `node scripts/seed.mjs`
 
@@ -464,12 +474,12 @@ Run: `node scripts/seed.mjs`
 
 ## Key Files
 
-| File | Description |
-|------|-------------|
-| `src/lib/server/db.js` | Schema, migrations, data migration, all CRUD functions |
-| `src/lib/server/auth.js` | Session management, `requireRole()` helper |
-| `src/hooks.server.js` | Session validation + bakery context resolution |
-| `src/routes/(setup)/` | Bakery selection and creation (auth-only, no bakery required) |
-| `src/routes/(app)/bakeries/settings/` | Bakery settings and member management |
-| `src/routes/invite/[token]/` | Invitation acceptance flow |
-| `scripts/seed.mjs` | Demo data seeding with bakery support |
+| File                                  | Description                                                   |
+| ------------------------------------- | ------------------------------------------------------------- |
+| `src/lib/server/db.js`                | Schema, migrations, data migration, all CRUD functions        |
+| `src/lib/server/auth.js`              | Session management, `requireRole()` helper                    |
+| `src/hooks.server.js`                 | Session validation + bakery context resolution                |
+| `src/routes/(setup)/`                 | Bakery selection and creation (auth-only, no bakery required) |
+| `src/routes/(app)/bakeries/settings/` | Bakery settings and member management                         |
+| `src/routes/invite/[token]/`          | Invitation acceptance flow                                    |
+| `scripts/seed.mjs`                    | Demo data seeding with bakery support                         |

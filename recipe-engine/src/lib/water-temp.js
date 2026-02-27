@@ -38,14 +38,15 @@ export function calcWaterTemp(input) {
   if (input.has_autolyse && input.autolyse_duration_min > 0) {
     const initialMixTemp = (flour_temp + room_temp) / 2
     const drift = Math.min(input.autolyse_duration_min / 60, 1.0)
-    const postAutolyseTemp = initialMixTemp + (room_temp - initialMixTemp) * drift
+    const postAutolyseTemp =
+      initialMixTemp + (room_temp - initialMixTemp) * drift
 
     const waterTemp = ddt * 3 - postAutolyseTemp - room_temp - friction_factor
 
     return {
       water_temp: waterTemp,
       method: '3-factor-autolyse',
-      warning: getWarning(waterTemp)
+      warning: getWarning(waterTemp),
     }
   }
 
@@ -57,7 +58,7 @@ export function calcWaterTemp(input) {
     return {
       water_temp: waterTemp,
       method: '4-factor',
-      warning: getWarning(waterTemp)
+      warning: getWarning(waterTemp),
     }
   }
 
@@ -67,7 +68,7 @@ export function calcWaterTemp(input) {
   return {
     water_temp: waterTemp,
     method: '3-factor',
-    warning: getWarning(waterTemp)
+    warning: getWarning(waterTemp),
   }
 }
 
@@ -76,7 +77,8 @@ export function calcWaterTemp(input) {
  * @returns {string|null}
  */
 function getWarning(temp) {
-  if (temp < 1) return 'Use ice water. Target unachievable with liquid water alone.'
+  if (temp < 1)
+    return 'Use ice water. Target unachievable with liquid water alone.'
   if (temp > 43) return 'Water too hot — will kill yeast above 43°C.'
   return null
 }

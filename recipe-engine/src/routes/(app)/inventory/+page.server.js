@@ -9,7 +9,10 @@ import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { ingredients: getIngredientLibrary(locals.bakery.id), canEdit: locals.bakery.role !== 'viewer' }
+  return {
+    ingredients: getIngredientLibrary(locals.bakery.id),
+    canEdit: locals.bakery.role !== 'viewer',
+  }
 }
 
 /** @type {import('./$types').Actions} */
@@ -23,10 +26,17 @@ export const actions = {
     if (!category) return fail(400, { error: 'Category is required' })
 
     try {
-      createIngredientLibraryEntry(locals.user.id, locals.bakery.id, name, category)
+      createIngredientLibraryEntry(
+        locals.user.id,
+        locals.bakery.id,
+        name,
+        category
+      )
     } catch (e) {
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return fail(400, { error: 'An ingredient with that name already exists' })
+        return fail(400, {
+          error: 'An ingredient with that name already exists',
+        })
       }
       throw e
     }
@@ -47,7 +57,9 @@ export const actions = {
       updateIngredientLibraryEntry(id, locals.bakery.id, name, category)
     } catch (e) {
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return fail(400, { error: 'An ingredient with that name already exists' })
+        return fail(400, {
+          error: 'An ingredient with that name already exists',
+        })
       }
       throw e
     }

@@ -6,8 +6,16 @@
 export const MIX_TYPES = {
   'Short Mix': { target_rounds: 600, friction_mult: 0.7, has_second: false },
   'Improved Mix': { target_rounds: 1000, friction_mult: 1.0, has_second: true },
-  'Intensive Mix': { target_rounds: 1600, friction_mult: 1.3, has_second: true },
-  'Short Improved': { target_rounds: 400, friction_mult: 0.5, has_second: true },
+  'Intensive Mix': {
+    target_rounds: 1600,
+    friction_mult: 1.3,
+    has_second: true,
+  },
+  'Short Improved': {
+    target_rounds: 400,
+    friction_mult: 0.5,
+    has_second: true,
+  },
 }
 
 export const MIX_TYPE_NAMES = Object.keys(MIX_TYPES)
@@ -77,7 +85,10 @@ export function calcMixDurations(mixerProfile, mixType) {
   if (mixType === 'Short Mix') {
     // No 2nd speed — all development on 1st speed
     // 1st rounds = Improved Mix 1st rounds + 600 (Short Mix target rounds)
-    const improvedCal = findCalibration(mixerProfile.calibrations, 'Improved Mix')
+    const improvedCal = findCalibration(
+      mixerProfile.calibrations,
+      'Improved Mix'
+    )
     return {
       first_speed_min: (improvedCal.first_speed_rounds + 600) / rpm1,
       second_speed_min: 0,
@@ -98,9 +109,11 @@ export function calcMixDurations(mixerProfile, mixType) {
  * @returns {{ first_speed_rounds: number }}
  */
 function findCalibration(calibrations, mixType) {
-  return (calibrations || []).find((c) => c.mix_type === mixType) || {
-    first_speed_rounds: 0,
-  }
+  return (
+    (calibrations || []).find((c) => c.mix_type === mixType) || {
+      first_speed_rounds: 0,
+    }
+  )
 }
 
 /**

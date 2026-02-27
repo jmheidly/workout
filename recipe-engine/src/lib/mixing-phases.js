@@ -163,11 +163,13 @@ export function classifyAllIngredients(ingredients) {
 
   // Post-pass: refine liquid PF classification in AUTOLYSE
   const liquidPFs = ingredients.filter(
-    (i) => i.category === 'PREFERMENT' && map.get(i.id) === MIXING_PHASES.AUTOLYSE
+    (i) =>
+      i.category === 'PREFERMENT' && map.get(i.id) === MIXING_PHASES.AUTOLYSE
   )
 
   if (liquidPFs.length > 0) {
-    const totalHydration = totalFlourTfq > 0 ? totalFormulaWater / totalFlourTfq : 0
+    const totalHydration =
+      totalFlourTfq > 0 ? totalFormulaWater / totalFlourTfq : 0
     const ryePct = totalFlourTfq > 0 ? ryeQty / totalFlourTfq : 0
     const wholeWheatPct = totalFlourTfq > 0 ? wholeWheatQty / totalFlourTfq : 0
 
@@ -178,13 +180,21 @@ export function classifyAllIngredients(ingredients) {
         // Poolish: existing water-ratio threshold
         if (totalFormulaWater > 0) {
           const water = pfWaterQty(pf, ingredients)
-          if (water !== null && water / totalFormulaWater < POOLISH_WATER_THRESHOLD) {
+          if (
+            water !== null &&
+            water / totalFormulaWater < POOLISH_WATER_THRESHOLD
+          ) {
             map.set(pf.id, MIXING_PHASES.INCORPORATION)
           }
         }
       } else if (pfType === 'LEVAIN') {
         // Sourdough decision matrix — uses TFQ-based totals
-        const metrics = pfMetrics(pf, ingredients, totalFlourTfq, totalFormulaWater)
+        const metrics = pfMetrics(
+          pf,
+          ingredients,
+          totalFlourTfq,
+          totalFormulaWater
+        )
 
         // Rule 0: No BP data — keep AUTOLYSE default
         if (!metrics) continue
@@ -196,7 +206,7 @@ export function classifyAllIngredients(ingredients) {
         }
 
         // Rule 2: Whole wheat > 40% → INCORPORATION
-        if (wholeWheatPct > 0.40) {
+        if (wholeWheatPct > 0.4) {
           map.set(pf.id, MIXING_PHASES.INCORPORATION)
           continue
         }
@@ -205,7 +215,7 @@ export function classifyAllIngredients(ingredients) {
         if (metrics.inoculationPct >= 0.25) continue
 
         // Rule 4: Low inoculation (< 15%) AND low water ratio (< 20%) → INCORPORATION
-        if (metrics.inoculationPct < 0.15 && metrics.waterRatio < 0.20) {
+        if (metrics.inoculationPct < 0.15 && metrics.waterRatio < 0.2) {
           map.set(pf.id, MIXING_PHASES.INCORPORATION)
           continue
         }
@@ -224,8 +234,10 @@ export function classifyAllIngredients(ingredients) {
     }
 
     // Rye autolyse warning
-    if (ryePct > 0.30) {
-      const hasAutolysePhase = [...map.values()].some((p) => p === MIXING_PHASES.AUTOLYSE)
+    if (ryePct > 0.3) {
+      const hasAutolysePhase = [...map.values()].some(
+        (p) => p === MIXING_PHASES.AUTOLYSE
+      )
       if (hasAutolysePhase) {
         warnings.push({
           type: 'rye_autolyse',
@@ -307,7 +319,12 @@ function pfFlourQty(pfIngredient, allIngredients) {
  * Compute sourdough decision metrics for a preferment.
  * Returns null if no BP data is available.
  */
-function pfMetrics(pfIngredient, allIngredients, totalFlourQty, totalFormulaWater) {
+function pfMetrics(
+  pfIngredient,
+  allIngredients,
+  totalFlourQty,
+  totalFormulaWater
+) {
   const flourQty = pfFlourQty(pfIngredient, allIngredients)
   const waterQty = pfWaterQty(pfIngredient, allIngredients)
 

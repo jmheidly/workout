@@ -29,16 +29,28 @@ export const actions = {
     const role = form.get('role')?.toString() || 'member'
 
     if (!email) return fail(400, { error: 'Email is required' })
-    if (!['member', 'admin'].includes(role)) return fail(400, { error: 'Invalid role' })
+    if (!['member', 'admin'].includes(role))
+      return fail(400, { error: 'Invalid role' })
 
     const token = crypto.randomUUID()
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    const expiresAt = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString()
 
     try {
-      createInvitation(locals.bakery.id, email, role, locals.user.id, token, expiresAt)
+      createInvitation(
+        locals.bakery.id,
+        email,
+        role,
+        locals.user.id,
+        token,
+        expiresAt
+      )
     } catch (e) {
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return fail(400, { error: 'An invitation for this email already exists' })
+        return fail(400, {
+          error: 'An invitation for this email already exists',
+        })
       }
       throw e
     }
@@ -71,7 +83,12 @@ export const actions = {
     if (!target) return fail(404, { error: 'Member not found' })
 
     // Only owners can change admin/owner roles
-    if (target.role === 'owner' || target.role === 'admin' || role === 'owner' || role === 'admin') {
+    if (
+      target.role === 'owner' ||
+      target.role === 'admin' ||
+      role === 'owner' ||
+      role === 'admin'
+    ) {
       requireRole(locals, 'owner')
     } else {
       requireRole(locals, 'owner', 'admin')

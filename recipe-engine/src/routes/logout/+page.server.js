@@ -2,7 +2,7 @@ import { redirect } from '@sveltejs/kit'
 import {
   invalidateSession,
   SESSION_COOKIE,
-  deleteSessionCookie
+  deleteSessionCookie,
 } from '$lib/server/auth.js'
 
 /** @type {import('./$types').Actions} */
@@ -14,5 +14,5 @@ export const actions = {
     }
     deleteSessionCookie(cookies)
     redirect(302, '/login')
-  }
+  },
 }

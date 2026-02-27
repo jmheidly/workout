@@ -21,7 +21,13 @@ export async function GET({ url, cookies }) {
   const storedState = cookies.get('google_oauth_state')
   const codeVerifier = cookies.get('google_oauth_code_verifier')
 
-  if (!code || !state || !storedState || !codeVerifier || state !== storedState) {
+  if (
+    !code ||
+    !state ||
+    !storedState ||
+    !codeVerifier ||
+    state !== storedState
+  ) {
     error(400, 'Invalid OAuth callback')
   }
 
@@ -52,7 +58,10 @@ export async function GET({ url, cookies }) {
     // Check if user exists by email (link accounts)
     const existingByEmail = getUserByEmail(email)
     if (existingByEmail) {
-      updateUser(existingByEmail.id, { google_id: googleId, name: name || existingByEmail.name })
+      updateUser(existingByEmail.id, {
+        google_id: googleId,
+        name: name || existingByEmail.name,
+      })
       user = existingByEmail
     } else {
       // New user
@@ -77,7 +86,10 @@ export async function GET({ url, cookies }) {
 
   if (isNewUser) {
     // Create personal bakery for new user
-    const slug = email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    const slug = email
+      .split('@')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
     const displayName = name || email.split('@')[0]
     const bakery = createBakery(`${displayName}'s Bakery`, slug, user.id)
     addBakeryMember(bakery.id, user.id, 'owner')

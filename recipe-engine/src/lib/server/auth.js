@@ -6,7 +6,7 @@ import {
   getSession as dbGetSession,
   deleteSession as dbDeleteSession,
   updateSessionExpiry,
-  getUserById
+  getUserById,
 } from './db.js'
 
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
@@ -80,7 +80,7 @@ export function validateSession(token) {
 
   return {
     user: { id: user.id, email: user.email, name: user.name || null },
-    session: { id: sessionId, expiresAt: session.expires_at }
+    session: { id: sessionId, expiresAt: session.expires_at },
   }
 }
 
@@ -108,7 +108,7 @@ export function setSessionCookie(cookies, token, expiresAt) {
     httpOnly: true,
     sameSite: 'lax',
     secure: false, // set to true in production
-    expires: new Date(expiresAt)
+    expires: new Date(expiresAt),
   })
 }
 

@@ -33,7 +33,9 @@ export class SidebarState {
 
   setOpen(value) {
     this.open = value
-    document.cookie = `${SIDEBAR_COOKIE}=${value}; path=/; max-age=${60 * 60 * 24 * 7}`
+    document.cookie = `${SIDEBAR_COOKIE}=${value}; path=/; max-age=${
+      60 * 60 * 24 * 7
+    }`
   }
 }
 

@@ -18,16 +18,28 @@ export const actions = {
     }
 
     if (!slug) {
-      slug = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+      slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
     }
 
     if (!/^[a-z0-9-]+$/.test(slug)) {
-      return fail(400, { error: 'Slug can only contain lowercase letters, numbers, and hyphens', name, slug })
+      return fail(400, {
+        error: 'Slug can only contain lowercase letters, numbers, and hyphens',
+        name,
+        slug,
+      })
     }
 
     const existing = getBakeryBySlug(slug)
     if (existing) {
-      return fail(400, { error: 'A bakery with this slug already exists', name, slug })
+      return fail(400, {
+        error: 'A bakery with this slug already exists',
+        name,
+        slug,
+      })
     }
 
     const bakery = createBakery(name, slug, locals.user.id)

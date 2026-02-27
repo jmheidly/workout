@@ -36,7 +36,10 @@ export const actions = {
     }
 
     if (password.length < 6) {
-      return fail(400, { error: 'Password must be at least 6 characters', email })
+      return fail(400, {
+        error: 'Password must be at least 6 characters',
+        email,
+      })
     }
 
     if (password !== confirmPassword) {
@@ -45,7 +48,10 @@ export const actions = {
 
     const existing = getUserByEmail(email)
     if (existing) {
-      return fail(400, { error: 'An account with this email already exists', email })
+      return fail(400, {
+        error: 'An account with this email already exists',
+        email,
+      })
     }
 
     const hash = hashPassword(password)
@@ -71,7 +77,10 @@ export const actions = {
     }
 
     // No invite — create personal bakery
-    const slug = email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    const slug = email
+      .split('@')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
     const bakery = createBakery(`${name}'s Bakery`, slug, user.id)
     addBakeryMember(bakery.id, user.id, 'owner')
     setActiveBakery(user.id, bakery.id)

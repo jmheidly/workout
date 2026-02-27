@@ -7,12 +7,12 @@
  * FLOUR is always 1.0 (100%) as the base.
  */
 export const PF_SEED_BAKERS_PCT = {
-  POOLISH:        { FLOUR: 1.0, LIQUID: 1.0,  LEAVENING: 0.001 },
-  BIGA:           { FLOUR: 1.0, LIQUID: 0.55, LEAVENING: 0.001 },
-  LEVAIN:         { FLOUR: 1.0, LIQUID: 1.0 },
-  PATE_FERMENTEE: { FLOUR: 1.0, LIQUID: 0.6,  LEAVENING: 0.001 },
-  SPONGE:         { FLOUR: 1.0, LIQUID: 0.6,  LEAVENING: 0.01 },
-  CUSTOM:         {},
+  POOLISH: { FLOUR: 1.0, LIQUID: 1.0, LEAVENING: 0.001 },
+  BIGA: { FLOUR: 1.0, LIQUID: 0.55, LEAVENING: 0.001 },
+  LEVAIN: { FLOUR: 1.0, LIQUID: 1.0 },
+  PATE_FERMENTEE: { FLOUR: 1.0, LIQUID: 0.6, LEAVENING: 0.001 },
+  SPONGE: { FLOUR: 1.0, LIQUID: 0.6, LEAVENING: 0.01 },
+  CUSTOM: {},
 }
 
 export const FERMENTATION_DEFAULTS = {
@@ -29,7 +29,11 @@ export const FERMENTATION_DEFAULTS = {
  * @returns {number}
  */
 export function getEffectiveFermentationDuration(settings) {
-  return settings.fermentation_duration_min ?? FERMENTATION_DEFAULTS[settings.type] ?? 480
+  return (
+    settings.fermentation_duration_min ??
+    FERMENTATION_DEFAULTS[settings.type] ??
+    480
+  )
 }
 
 /**

@@ -21,6 +21,7 @@ Workout.lol — a Next.js web app for creating workout routines based on availab
 ### Data Flow: Dual Storage
 
 The `useAccount` hook (`utils/useAccount.js`) is the central state manager. It transparently switches between:
+
 - **Anonymous users**: localStorage via `useLocalStorage`
 - **Authenticated users**: MongoDB via SWR + `/api/user` endpoints
 

@@ -1,6 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit'
 import { requireRole } from '$lib/server/auth.js'
-import { getBakery, getBakeryBySlug, updateBakery, deleteBakery } from '$lib/server/db.js'
+import {
+  getBakery,
+  getBakeryBySlug,
+  updateBakery,
+  deleteBakery,
+} from '$lib/server/db.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -22,7 +27,9 @@ export const actions = {
     if (!slug) return fail(400, { error: 'Slug is required' })
 
     if (!/^[a-z0-9-]+$/.test(slug)) {
-      return fail(400, { error: 'Slug can only contain lowercase letters, numbers, and hyphens' })
+      return fail(400, {
+        error: 'Slug can only contain lowercase letters, numbers, and hyphens',
+      })
     }
 
     // Check slug uniqueness (excluding self)

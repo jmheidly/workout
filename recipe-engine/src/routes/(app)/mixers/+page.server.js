@@ -9,7 +9,10 @@ import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
-  return { mixerProfiles: getMixerProfiles(locals.bakery.id), canEdit: locals.bakery.role !== 'viewer' }
+  return {
+    mixerProfiles: getMixerProfiles(locals.bakery.id),
+    canEdit: locals.bakery.role !== 'viewer',
+  }
 }
 
 /** @type {import('./$types').Actions} */

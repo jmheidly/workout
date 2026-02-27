@@ -1,5 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit'
-import { getUserBakeries, setActiveBakery, getBakeryMember } from '$lib/server/db.js'
+import {
+  getUserBakeries,
+  setActiveBakery,
+  getBakeryMember,
+} from '$lib/server/db.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
