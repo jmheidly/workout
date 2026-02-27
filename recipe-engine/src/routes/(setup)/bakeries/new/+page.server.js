@@ -1,9 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit'
 import {
   getBakeryBySlug,
-  createBakery,
-  addBakeryMember,
-  setActiveBakery,
+  createBakeryWithSubscription,
 } from '$lib/server/db.js'
 
 /** @type {import('./$types').Actions} */
@@ -42,9 +40,7 @@ export const actions = {
       })
     }
 
-    const bakery = createBakery(name, slug, locals.user.id)
-    addBakeryMember(bakery.id, locals.user.id, 'owner')
-    setActiveBakery(locals.user.id, bakery.id)
+    createBakeryWithSubscription(name, slug, locals.user.id)
 
     redirect(302, '/recipes')
   },

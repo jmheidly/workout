@@ -7,9 +7,7 @@ import {
   getUserById,
   createGoogleUser,
   updateUser,
-  createBakery,
-  addBakeryMember,
-  setActiveBakery,
+  createBakeryWithSubscription,
   getBakeryMember,
 } from '$lib/server/db.js'
 import { createSession, setSessionCookie } from '$lib/server/auth.js'
@@ -91,15 +89,13 @@ export async function GET({ url, cookies }) {
   }
 
   if (isNewUser) {
-    // Create personal bakery for new user
+    // Create personal bakery with subscription for new user
     const slug = email
       .split('@')[0]
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '-')
     const displayName = name || email.split('@')[0]
-    const bakery = createBakery(`${displayName}'s Bakery`, slug, user.id)
-    addBakeryMember(bakery.id, user.id, 'owner')
-    setActiveBakery(user.id, bakery.id)
+    createBakeryWithSubscription(`${displayName}'s Bakery`, slug, user.id)
     redirect(302, '/recipes')
   }
 

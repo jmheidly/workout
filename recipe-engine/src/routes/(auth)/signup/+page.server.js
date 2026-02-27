@@ -7,7 +7,7 @@ import {
   acceptInvitation,
   addBakeryMember,
   setActiveBakery,
-  createBakery,
+  createBakeryWithSubscription,
   invalidateLoginCodes,
   createLoginCode,
 } from '$lib/server/db.js'
@@ -99,14 +99,12 @@ export const actions = {
       addBakeryMember(invite.bakery_id, user.id, invite.role)
       setActiveBakery(user.id, invite.bakery_id)
     } else {
-      // No invite — create personal bakery
+      // No invite — create personal bakery with subscription
       const slug = email
         .split('@')[0]
         .toLowerCase()
         .replace(/[^a-z0-9-]/g, '-')
-      const bakery = createBakery(`${name}'s Bakery`, slug, user.id)
-      addBakeryMember(bakery.id, user.id, 'owner')
-      setActiveBakery(user.id, bakery.id)
+      createBakeryWithSubscription(`${name}'s Bakery`, slug, user.id)
     }
 
     await sendVerificationCode(user.id, email)

@@ -5,7 +5,9 @@ import {
   getBakeryBySlug,
   updateBakery,
   deleteBakery,
+  getBakerySubscription,
 } from '$lib/server/db.js'
+import { getStripe } from '$lib/server/stripe.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -44,6 +46,20 @@ export const actions = {
 
   delete: async ({ locals }) => {
     requireRole(locals, 'owner')
+
+    // Cancel Stripe subscription if exists
+    const sub = getBakerySubscription(locals.bakery.id)
+    if (sub?.stripe_subscription_id) {
+      try {
+        const stripe = getStripe()
+        if (stripe) {
+          await stripe.subscriptions.cancel(sub.stripe_subscription_id)
+        }
+      } catch {
+        // Non-blocking — bakery deletion proceeds even if Stripe fails
+      }
+    }
+
     deleteBakery(locals.bakery.id)
     redirect(302, '/bakeries')
   },

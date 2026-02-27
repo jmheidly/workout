@@ -6,7 +6,9 @@
 
   const sidebar = useSidebar()
 
-  let { user = null, bakery = null } = $props()
+  let { user = null, bakery = null, subscription = null } = $props()
+
+  const TRIAL_TOTAL_DAYS = 14
 
   const navItems = [
     {
@@ -41,6 +43,11 @@
       label: 'Mixers',
       href: '/mixers',
       icon: 'mixer',
+    },
+    {
+      label: 'Billing',
+      href: '/bakeries/settings/billing',
+      icon: 'credit-card',
     },
     {
       label: 'Bakery Settings',
@@ -130,7 +137,9 @@
               isActive={isActive(item.href)}
               tooltipContent={item.label}
             >
-              {#if item.icon === 'mixer'}
+              {#if item.icon === 'credit-card'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" /></svg>
+              {:else if item.icon === 'mixer'}
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14" /><line x1="4" x2="4" y1="10" y2="3" /><line x1="12" x2="12" y1="21" y2="12" /><line x1="12" x2="12" y1="8" y2="3" /><line x1="20" x2="20" y1="21" y2="16" /><line x1="20" x2="20" y1="12" y2="3" /><line x1="2" x2="6" y1="14" y2="14" /><line x1="10" x2="14" y1="8" y2="8" /><line x1="18" x2="22" y1="16" y2="16" /></svg>
               {:else if item.icon === 'settings'}
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -142,6 +151,72 @@
       </Sidebar.Menu>
     </Sidebar.Group>
   </Sidebar.Content>
+
+  {#if subscription?.reason === 'trial' && subscription.trialDaysLeft != null}
+    <div class="px-3 pb-2">
+      <a
+        href="/bakeries/settings/billing"
+        class="group relative block overflow-hidden rounded-lg border border-sidebar-border bg-gradient-to-br from-sidebar-accent/50 to-sidebar-accent/20 p-3 transition-colors hover:from-sidebar-accent/70 hover:to-sidebar-accent/30"
+      >
+        <div class="mb-2 flex items-center gap-2">
+          <div class="flex size-6 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+          </div>
+          <span class="text-xs font-semibold text-sidebar-foreground">Free Trial</span>
+        </div>
+        <div class="mb-1.5 flex items-baseline justify-between">
+          <span class="text-[11px] text-sidebar-foreground/70">{subscription.trialDaysLeft} day{subscription.trialDaysLeft === 1 ? '' : 's'} remaining</span>
+        </div>
+        <div class="mb-2.5 h-1.5 overflow-hidden rounded-full bg-sidebar-foreground/10">
+          <div
+            class="h-full rounded-full bg-amber-500 transition-all"
+            style="width: {Math.max(4, (subscription.trialDaysLeft / TRIAL_TOTAL_DAYS) * 100)}%"
+          ></div>
+        </div>
+        <span class="text-xs font-medium text-sidebar-foreground/80 transition-colors group-hover:text-sidebar-foreground">
+          Upgrade to Pro &rarr;
+        </span>
+      </a>
+    </div>
+  {/if}
+
+  {#if subscription?.reason === 'past_due_grace'}
+    <div class="px-3 pb-2">
+      <a
+        href="/bakeries/settings/billing"
+        class="group block rounded-lg border border-red-200 bg-red-50 p-3 transition-colors hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/30 dark:hover:bg-red-950/50"
+      >
+        <div class="mb-1 flex items-center gap-2">
+          <div class="flex size-6 items-center justify-center rounded-md bg-red-500/15 text-red-600 dark:text-red-400">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
+          </div>
+          <span class="text-xs font-semibold text-red-700 dark:text-red-400">Payment Past Due</span>
+        </div>
+        <span class="text-[11px] text-red-600/80 transition-colors group-hover:text-red-700 dark:text-red-400/80 dark:group-hover:text-red-300">
+          Update billing info &rarr;
+        </span>
+      </a>
+    </div>
+  {/if}
+
+  {#if subscription?.cancelAtPeriodEnd && subscription?.reason === 'subscribed'}
+    <div class="px-3 pb-2">
+      <a
+        href="/bakeries/settings/billing"
+        class="group block rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-3 transition-colors hover:bg-sidebar-accent/50"
+      >
+        <div class="mb-1 flex items-center gap-2">
+          <div class="flex size-6 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
+          </div>
+          <span class="text-xs font-semibold text-sidebar-foreground">Canceling Soon</span>
+        </div>
+        <span class="text-[11px] text-sidebar-foreground/70 transition-colors group-hover:text-sidebar-foreground">
+          Manage billing &rarr;
+        </span>
+      </a>
+    </div>
+  {/if}
 
   <Sidebar.Footer>
     {#if user}

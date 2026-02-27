@@ -8,6 +8,7 @@
     formatDuration,
   } from '$lib/preferment-defaults.js'
   import { MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
+  import { computeTimeline } from '$lib/timeline.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -17,6 +18,7 @@
   } from '$lib/components/ui/card/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
   import MixerPicker from '$lib/components/mixer-picker.svelte'
+  import TimelineChart from '$lib/components/timeline-chart.svelte'
 
   let { data } = $props()
 
@@ -57,6 +59,22 @@
   }
 
   let targetMixTime = $state(defaultMixTime())
+  let scheduleMode = $state('forward') // 'forward' | 'reverse'
+
+  // ── Timeline ────────────────────────────────────────────────
+
+  let timeline = $derived.by(() => {
+    const anchor = new Date(targetMixTime)
+    if (isNaN(anchor.getTime())) return null
+    return computeTimeline({
+      recipe: data.recipe,
+      calculated: data.calculated,
+      anchorTime: anchor,
+      mode: scheduleMode,
+      mixType: data.recipe.mix_type || 'Improved Mix',
+      companions: data.companionDetails || [],
+    })
+  })
 
   // ── Mixing Timer ─────────────────────────────────────────
 
@@ -91,9 +109,16 @@
       if (waterTemp < 1) waterWarning = 'Use ice water. Target unachievable with liquid water alone.'
       else if (waterTemp > 43) waterWarning = 'Water too hot — will kill yeast above 43°C.'
 
-      // Timeline
-      const readyBy = new Date(mixDate)
-      const startTime = new Date(mixDate.getTime() - fermentMin * 60 * 1000)
+      // Timeline — use timeline-derived times when available
+      const pfTrack = timeline?.tracks.find((t) => t.id === `pf-${pf.id}`)
+      let startTime, readyBy
+      if (pfTrack && pfTrack.blocks.length > 0) {
+        startTime = pfTrack.blocks[0].startTime
+        readyBy = pfTrack.blocks[pfTrack.blocks.length - 1].endTime
+      } else {
+        readyBy = new Date(mixDate)
+        startTime = new Date(mixDate.getTime() - fermentMin * 60 * 1000)
+      }
       const startInPast = startTime < now
 
       // Breakdown from calculated data
@@ -240,7 +265,9 @@
           {/if}
         </div>
         <div class="w-52">
-          <label for="mix-time" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Target Mix Time</label>
+          <label for="mix-time" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">
+            {scheduleMode === 'forward' ? 'Target Mix Time' : 'Target Finish Time'}
+          </label>
           <input
             id="mix-time"
             type="datetime-local"
@@ -248,9 +275,72 @@
             class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
           />
         </div>
+        <div>
+          <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Schedule</label>
+          <div class="flex rounded-md border border-input">
+            <button
+              type="button"
+              class="px-3 py-2 text-xs rounded-l-md transition-colors {scheduleMode === 'forward'
+                ? 'bg-primary text-primary-foreground'
+                : 'hover:bg-muted'}"
+              onclick={() => { scheduleMode = 'forward' }}
+            >
+              Forward
+            </button>
+            <button
+              type="button"
+              class="px-3 py-2 text-xs rounded-r-md transition-colors {scheduleMode === 'reverse'
+                ? 'bg-primary text-primary-foreground'
+                : 'hover:bg-muted'}"
+              onclick={() => { scheduleMode = 'reverse' }}
+            >
+              Reverse
+            </button>
+          </div>
+        </div>
       </div>
+      {#if timeline}
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          {#if scheduleMode === 'reverse' && timeline.computedMixTime}
+            <Badge variant="secondary" class="bg-emerald-50 text-emerald-700 font-normal tabular-nums">
+              Computed Mix: {formatTime(timeline.computedMixTime)}
+            </Badge>
+          {/if}
+          {#if scheduleMode === 'forward' && timeline.computedFinishTime}
+            <Badge variant="secondary" class="bg-violet-50 text-violet-700 font-normal tabular-nums">
+              Est. Finish: {formatTime(timeline.computedFinishTime)}
+            </Badge>
+          {/if}
+          {#if timeline.dagHasCycle}
+            <Badge variant="secondary" class="border-red-300 bg-red-50 text-red-700 font-normal">
+              Circular PF dependency detected
+            </Badge>
+          {/if}
+        </div>
+      {/if}
     </CardContent>
   </Card>
+
+  <!-- ── Production Timeline ─────────────────────────────── -->
+
+  {#if timeline && timeline.tracks.length > 0}
+    <Card>
+      <CardHeader class="pb-4">
+        <div class="flex items-center justify-between">
+          <CardTitle class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+            Production Timeline
+          </CardTitle>
+          <Badge variant="secondary" class="font-normal tabular-nums">
+            {formatDuration(Math.round(timeline.totalDurationMin))}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <TimelineChart {timeline} />
+      </CardContent>
+    </Card>
+  {/if}
 
   <!-- ── Per-Preferment Cards ──────────────────────────── -->
 

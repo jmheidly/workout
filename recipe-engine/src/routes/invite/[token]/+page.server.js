@@ -3,10 +3,13 @@ import {
   getInvitationByToken,
   getBakery,
   getBakeryMember,
+  getBakerySubscription,
+  getBakeryMemberCount,
   acceptInvitation,
   addBakeryMember,
   setActiveBakery,
 } from '$lib/server/db.js'
+import { getSubscriptionStatus, checkEntitlement } from '$lib/server/plans.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
@@ -66,6 +69,19 @@ export const actions = {
 
     const existing = getBakeryMember(invitation.bakery_id, locals.user.id)
     if (existing) return fail(400, { error: 'Already a member' })
+
+    // Check member limit for the target bakery
+    const sub = getBakerySubscription(invitation.bakery_id)
+    const status = getSubscriptionStatus(sub)
+    if (status.active) {
+      const { total } = getBakeryMemberCount(invitation.bakery_id)
+      const result = checkEntitlement(status.plan, 'member_count', {
+        currentMemberCount: total,
+      })
+      if (!result.allowed) {
+        return fail(403, { error: result.reason })
+      }
+    }
 
     acceptInvitation(invitation.id)
     addBakeryMember(invitation.bakery_id, locals.user.id, invitation.role)

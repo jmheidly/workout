@@ -5,9 +5,11 @@ import {
   getIngredientLibrary,
   getBakery,
 } from '$lib/server/db.js'
+import { requireSubscription } from '$lib/server/billing.js'
 
 /** @type {import('./$types').RequestHandler} */
 export function GET({ locals }) {
+  requireSubscription(locals)
   const bakeryId = locals.bakery.id
   const bakery = getBakery(bakeryId)
 

@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit'
 import crypto from 'crypto'
 import { requireRole } from '$lib/server/auth.js'
+import { requireEntitlement } from '$lib/server/billing.js'
 import {
   getBakeryMembers,
   getInvitationsByBakery,
@@ -30,6 +31,7 @@ export function load({ locals }) {
 export const actions = {
   invite: async ({ request, locals, url }) => {
     requireRole(locals, 'owner', 'admin')
+    requireEntitlement(locals, 'member_count')
 
     const form = await request.formData()
     const email = form.get('email')?.toString()?.trim()?.toLowerCase()
