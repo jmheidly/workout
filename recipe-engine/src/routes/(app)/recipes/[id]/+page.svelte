@@ -3,6 +3,13 @@
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
   import { PROCESS_STAGES, suggestProcessSteps } from '$lib/process-steps.js'
+  import {
+    DOUGH_TYPE_LABELS,
+    DOUGH_TYPE_GROUPS,
+    DOUGH_TYPE_DEFAULTS,
+    DOUGH_TYPE_MIX_CONSTRAINTS,
+    inferDoughType,
+  } from '$lib/dough-types.js'
   import { MIXING_PHASES, classifyAllIngredients } from '$lib/mixing-phases.js'
   import { MIX_TYPE_NAMES } from '$lib/mixing.js'
   import { FERMENTATION_DEFAULTS, PF_SEED_BAKERS_PCT, formatDuration } from '$lib/preferment-defaults.js'
@@ -111,6 +118,49 @@
 
   // Mix Type (§7)
   let mixType = $state(data.recipe.mix_type || 'Improved Mix')
+
+  // Dough Type (§15)
+  let doughType = $state(data.recipe.dough_type || null)
+
+  // Mix type constraint warning
+  let mixTypeWarning = $derived.by(() => {
+    if (!doughType) return null
+    const allowed = DOUGH_TYPE_MIX_CONSTRAINTS[doughType]
+    if (!allowed) return null
+    if (allowed.includes(mixType)) return null
+    return `${DOUGH_TYPE_LABELS[doughType]} dough typically uses ${allowed.join(' or ')}. Current mix type: ${mixType}.`
+  })
+
+  // Dough type inference suggestion (only when baker hasn't set one)
+  let doughTypeSuggestion = $derived.by(() => {
+    if (doughType) return null
+    if (ingredients.length < 2) return null
+    return inferDoughType(ingredients)
+  })
+
+  function onDoughTypeChange(newType) {
+    const oldType = doughType
+    doughType = newType || null
+    if (!newType) return
+
+    const defaults = DOUGH_TYPE_DEFAULTS[newType]
+    if (!defaults) return
+
+    // If recipe has ingredients, confirm before overwriting
+    if (ingredients.length > 0 && oldType !== newType) {
+      if (!confirm(`Apply ${DOUGH_TYPE_LABELS[newType]} defaults? This will update DDT, autolyse, mix type, and loss percentages.`)) {
+        return
+      }
+    }
+
+    if (defaults.ddt != null) ddt = defaults.ddt
+    autolyse = !!defaults.autolyse
+    autolyseDurationMin = defaults.autolyse_duration_min || 20
+    mixType = defaults.mix_type || 'Improved Mix'
+    processLossPct = defaults.process_loss_pct || 0
+    bakeLossPct = defaults.bake_loss_pct || 0
+    scheduleCalc()
+  }
 
   // Autolyse warnings — reactive, recomputed when ingredients change
   let autolyseWarnings = $derived.by(() => {
@@ -308,6 +358,7 @@
       name: recipeName,
       yield_per_piece: yieldPerPiece,
       ddt,
+      dough_type: doughType,
       process_loss_pct: processLossPct,
       bake_loss_pct: bakeLossPct,
       autolyse: autolyse ? 1 : 0,
@@ -347,6 +398,7 @@
     recipeName = s.name
     yieldPerPiece = s.yield_per_piece
     ddt = s.ddt
+    doughType = s.dough_type || null
     processLossPct = s.process_loss_pct || 0
     bakeLossPct = s.bake_loss_pct || 0
     autolyse = !!s.autolyse
@@ -676,6 +728,7 @@
       mixType,
       ddt,
       autolyseOverrides,
+      doughType,
     })
     for (const s of steps) {
       processSteps.push({
@@ -1017,6 +1070,34 @@
             class="w-full rounded-md border border-input bg-background px-3 py-2 text-lg font-semibold outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
           />
         </div>
+        <div class="w-48">
+          <label for="dough-type" class="mb-1.5 block text-xs font-medium text-muted-foreground">Dough Type</label>
+          <select
+            id="dough-type"
+            value={doughType || ''}
+            onchange={(e) => onDoughTypeChange(e.target.value || null)}
+            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+          >
+            <option value="">— Select —</option>
+            {#each Object.entries(DOUGH_TYPE_GROUPS) as [group, types]}
+              <optgroup label={group}>
+                {#each types as t}
+                  <option value={t}>{DOUGH_TYPE_LABELS[t]}</option>
+                {/each}
+              </optgroup>
+            {/each}
+          </select>
+          {#if doughTypeSuggestion}
+            <p class="mt-1 text-xs text-muted-foreground">
+              Looks like {DOUGH_TYPE_LABELS[doughTypeSuggestion.type]} —
+              <button
+                type="button"
+                class="underline hover:text-foreground"
+                onclick={() => onDoughTypeChange(doughTypeSuggestion.type)}
+              >Set</button>
+            </p>
+          {/if}
+        </div>
         <div class="w-32">
           <label for="yield" class="mb-1.5 block text-xs font-medium text-muted-foreground">Yield/piece (g)</label>
           <input
@@ -1130,6 +1211,10 @@
             </select>
           </div>
         </div>
+
+        {#if mixTypeWarning}
+          <p class="text-xs text-amber-600">{mixTypeWarning}</p>
+        {/if}
 
       {/if}
 

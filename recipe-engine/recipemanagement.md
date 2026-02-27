@@ -1887,3 +1887,159 @@ Quick-reference: every output the engine produces.
 ```
 
 These seed recipes demonstrate that the same engine handles lean, enriched, sourdough, and multi-stage doughs with zero code changes — only data changes.
+
+---
+
+## §15 Dough Type System
+
+Dough type is the highest-level classification a baker makes. It determines process flow, mixing strategy, fermentation schedule, and baking parameters.
+
+### §15.1 Design Principles
+
+- **Suggestion engine, not hard constraint.** Selecting a dough type pre-fills sensible defaults (DDT, autolyse, mix type, loss %) and generates type-appropriate process steps. The baker can override any field.
+- **Nullable.** Existing recipes without a dough type continue to work identically — the engine falls back to the standard bread generator.
+- **Soft mix-type warnings.** When the current mix type falls outside the recommended set for a dough type, an amber hint is shown (not a blocking error).
+
+### §15.2 Dough Type Table
+
+#### Bread (8 types)
+
+| Key | Label | Autolyse | Mix Type | DDT | Process Loss | Bake Loss |
+|-----|-------|----------|----------|-----|-------------|-----------|
+| `LEAN` | Lean | Yes, 20 min | Short Mix | 24 | 3% | 12% |
+| `ENRICHED` | Enriched | No | Improved Mix | 24 | 2% | 10% |
+| `RICH` | Rich | No | Intensive Mix | 22 | 2% | 8% |
+| `LAMINATED_YEASTED` | Laminated (Yeasted) | No | Short Mix | 22 | 5% | 10% |
+| `LAMINATED` | Laminated (Puff) | No | Short Mix | 20 | 5% | 10% |
+| `SOURDOUGH` | Sourdough | Yes, 30 min | Short Mix | 24 | 3% | 14% |
+| `PIZZA` | Pizza | No | Intensive Mix | 24 | 2% | 8% |
+| `FLATBREAD` | Flatbread | No | Improved Mix | 24 | 2% | 8% |
+
+#### Pastry (5 types)
+
+| Key | Label | Autolyse | Mix Type | DDT | Process Loss | Bake Loss |
+|-----|-------|----------|----------|-----|-------------|-----------|
+| `SHORTCRUST` | Shortcrust | No | Short Mix | 18 | 3% | 5% |
+| `SWEET_PASTRY` | Sweet Pastry | No | Short Mix | 18 | 3% | 5% |
+| `CHOUX` | Choux | No | Short Mix | N/A | 5% | 15% |
+| `COOKIE` | Cookie | No | Short Mix | 20 | 2% | 3% |
+| `PASTA` | Pasta | No | Improved Mix | 22 | 2% | 0% |
+
+### §15.3 Process Step Templates
+
+**Bread types** (LEAN, ENRICHED, RICH, SOURDOUGH) use the existing bread generator from §10 with mix-type-driven parameters.
+
+**PIZZA** and **FLATBREAD** use the bread generator with overridden post-mixing parameters and type-specific shaping/baking steps.
+
+**Specialized types** dispatch to dedicated template generators:
+
+- **LAMINATED_YEASTED**: Mix detrempe → bulk rest → enclose butter block → 3 letter folds with retards → sheet & cut → proof at 27°C → egg wash → bake 190°C
+- **LAMINATED (Puff)**: Mix detrempe → rest → enclose butter → 6 single folds with retards → cut/shape → bake 200°C
+- **CHOUX**: Cook panade on stove → cool → add eggs via mixer → pipe → bake 200°C then 175°C → dry → fill
+- **COOKIE**: Cream butter+sugar → add eggs → add dry → fold mixins → portion → chill → bake 175°C → cool
+- **SHORTCRUST**: Sablage → add liquid → fraisage → chill → roll & line → blind bake 180°C → fill
+- **SWEET_PASTRY**: Cream butter+sugar → add egg → add flour → chill → roll & line → bake 170°C
+- **PASTA**: Mix → knead → rest 30 min → roll → cut → dry/cook
+
+### §15.4 Mix Type Constraints
+
+Soft constraints warn when the selected mix type is unusual for the dough type:
+
+| Dough Type | Allowed Mix Types |
+|------------|------------------|
+| LAMINATED_YEASTED | Short Mix, Short Improved |
+| LAMINATED | Short Mix, Short Improved |
+| SHORTCRUST | Short Mix |
+| SWEET_PASTRY | Short Mix |
+| COOKIE | Short Mix |
+
+All other dough types allow any mix type without warning.
+
+### §15.5 Dough Type Inference
+
+`inferDoughType(ingredients)` analyzes ingredient composition and returns `{ type, confidence }` or `null`. Shown as a soft hint ("Looks like Enriched — Set") below the dough type selector when the baker hasn't chosen one yet.
+
+**Inferable types** (ingredient profile is a strong signal):
+
+| Inferred Type | Signal | Confidence |
+|---|---|---|
+| `SOURDOUGH` | Has enabled LEVAIN preferment | high |
+| `PASTA` | Semolina/durum flour >50% + no yeast/levain | high |
+| `COOKIE` | Chemical leavening + sugar BP >12% + fat BP >10% | medium |
+| `RICH` | Fat BP >12% + yeast | medium |
+| `ENRICHED` | Fat BP 5–12% + yeast | medium |
+| `LEAN` | Fat BP <2% + yeast + sugar BP <5% | medium |
+
+The 12% fat boundary between ENRICHED and RICH aligns with the point where mixing method must change from improved to intensive (ref: Suas, *Advanced Bread and Pastry*, Ch. 9).
+
+**Not inferable** (same ingredients, different process): LAMINATED_YEASTED, LAMINATED, CHOUX, PIZZA, FLATBREAD, SWEET_PASTRY, SHORTCRUST. Returns `null`.
+
+### §15.6 Implementation
+
+- Constants & inference: `src/lib/dough-types.js`
+- Database: `recipes.dough_type TEXT` (nullable)
+- Process steps: `suggestProcessSteps()` accepts `doughType` parameter
+- Version tracking: `dough_type` included in snapshots and diffs
+- UI: `<select>` with `<optgroup>` for Bread/Pastry in recipe header; inference hint when `dough_type` is null
+
+---
+
+## §16 Accompanied Recipes (future)
+
+Real-world bakery formulas often consist of multiple sub-recipes produced alongside the main dough.
+
+### §16.1 Relationship to §5 (Pre-ferment System)
+
+Multi-stage dough builds (Italian Levain, First Dough, Second Dough, etc.) are **already preferments** from the calculation engine's perspective. They are added as PREFERMENT-category ingredients in the final dough, their contributions decompose into the total formula, and §5's topological sort resolves the dependency chain. A "First Dough" with eggs, sugar, and butter works exactly like a simple poolish — the engine doesn't care how complex the preferment's internal formula is.
+
+**§5 stays. §16 layers on top for what §5 doesn't cover:**
+
+| Concern | §5 handles? | §16 adds |
+|---|---|---|
+| Calculation (decomposition, total formula, topological sort) | Yes | — |
+| Dependency chain resolution (PF → PF → final dough) | Yes | — |
+| Non-preferment companions (glazes, fillings, cinnamon sugar) | No | These don't contribute to total formula flour or hydration — they're separate preparations produced alongside the main recipe, scaled proportionally |
+| Per-stage process steps | Partial (DDT, fermentation duration) | Full process sequences per sub-recipe — e.g. Italian Levain's "feed every 4h", First Dough's "mix 1st speed only, ferment 2h at 29°C" |
+| Production scheduling across stages | No | §9 timeline needs to walk the dependency DAG to find the critical path — First Dough and Second Dough can run in parallel, Third Dough blocks on both |
+| Independent reuse | No (PFs are embedded inline per recipe) | The same Italian Levain formula used in both Panettone and Pan d'Oro — shared, reusable sub-recipe definitions |
+
+### §16.2 Categories
+
+- **Finishing components** — produced separately, applied after baking. E.g. Sticky Bun Glaze, Chocolate Hazelnut Glaze, icings.
+- **Filling components** — produced separately, incorporated during makeup. E.g. Cinnamon Sugar, pastry cream, frangipane, almond paste.
+- **Multi-stage dough builds** — intermediate doughs modeled as PREFERMENT ingredients in the engine. Each stage is a full formula with its own ingredients, baker's %, and fermentation schedule. Stages can form a DAG (directed acyclic graph), not just a linear chain. The calculation engine (§5) already resolves these; §16 adds richer process modeling and reuse.
+
+### §16.3 Examples (Suas, Ch. 9)
+
+| Main Recipe | Accompanied Recipes |
+|---|---|
+| Sweet Roll Dough | Cinnamon Sugar; Sticky Bun Glaze |
+| Laminated Brioche | Sponge (PF); pastry cream or frangipane (filling) |
+| Columba di Pasqua | Italian Levain (PF); First Dough (staged build); Hazelnut Glaze |
+| Pan d'Oro | Italian Levain; First Dough; Second Dough; Third Dough (4-stage build) |
+
+**Pan d'Oro dependency graph** (illustrates non-linear multi-stage builds):
+
+```
+Levain → First Dough ─┐
+                       ├→ Third Dough → Final Dough
+Second Dough ─────────┘
+```
+
+- Levain (Italian style, 140% starter, fed every 4h at 29°C) → feeds into First Dough
+- First Dough (flour + water + eggs + sugar + levain) — ferment 2h at 29°C
+- Second Dough (flour + eggs + sugar + osmotolerant yeast) — ferment 1.5h at 29°C, independent of First Dough
+- Third Dough takes First Dough (400% BP) AND Second Dough (128% BP) — ferment 3h at 29°C
+- Final Dough adds flour, eggs, salt, sugar (48%), honey, butter (75.75%), cocoa butter, vanilla — intensive mix, DDT 25-29°C, proof 14h at 22°C
+
+Each stage has its own baker's % computed against its own flour. The intermediate doughs appear as PREFERMENT ingredients in subsequent stages, expressed as a baker's % of that stage's flour — §5's engine resolves the full chain.
+
+### §16.4 Design Considerations (TBD)
+
+- A recipe can link to 1+ accompanied recipes, each with a role (preferment, filling, glaze, etc.)
+- Accompanied recipes are themselves recipes — they have ingredients, process steps, and can be versioned independently
+- Multi-stage builds form a DAG — stages can depend on multiple predecessors, and the calculation engine (§5) already resolves these via topological sort
+- **Scaling:** each accompanied recipe is its own formula with its own baker's %. When the baker scales the main recipe (e.g. bigger batch), the accompanied recipe scales proportionally — its internal ratios stay fixed, only the total quantity changes to match what the main recipe needs
+- **Non-PF companions** (glazes, fillings) don't participate in §4/§5 calculations — they are scaled independently based on the main recipe's batch size
+- **Reuse:** a sub-recipe (e.g. Italian Levain) could be shared across multiple parent recipes rather than duplicated inline
+- **Versioning (§12):** changing a glaze formula shouldn't create a new version of the parent recipe, but should be traceable
