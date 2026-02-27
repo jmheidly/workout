@@ -572,12 +572,21 @@
       <CardContent>
         <div class="space-y-6">
           {#each data.companionDetails as comp}
-            {@const compScale = comp.qty && comp.calculated?.totals?.total_weight ? comp.qty / comp.calculated.totals.total_weight : 1}
+            {@const compProcessLoss = comp.calculated?.totals?.process_loss_pct || 0}
+            {@const compBakeLoss = comp.calculated?.totals?.bake_loss_pct || 0}
+            {@const compLossDenom = (1 - compProcessLoss) * (1 - compBakeLoss)}
+            {@const compRawQty = comp.qty && compLossDenom > 0 ? comp.qty / compLossDenom : comp.qty}
+            {@const compScale = compRawQty && comp.calculated?.totals?.total_weight ? compRawQty / comp.calculated.totals.total_weight : 1}
             <div>
               <div class="mb-3 flex items-center gap-2">
                 <a href="/recipes/{comp.companion_recipe_id}" class="text-sm font-semibold hover:underline">{comp.companion_name}</a>
                 <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
                 <span class="text-xs font-medium tabular-nums text-muted-foreground">{formatGrams(comp.qty || 0)}</span>
+                {#if compProcessLoss > 0 || compBakeLoss > 0}
+                  <span class="text-[10px] tabular-nums text-muted-foreground">
+                    (raw: {formatGrams(compRawQty)}{compProcessLoss > 0 ? `, ${(compProcessLoss * 100).toFixed(0)}% proc` : ''}{compBakeLoss > 0 ? `, ${(compBakeLoss * 100).toFixed(0)}% bake` : ''})
+                  </span>
+                {/if}
                 {#if comp.notes}
                   <span class="text-xs text-muted-foreground">{comp.notes}</span>
                 {/if}
@@ -612,7 +621,7 @@
                           {(comp.calculated.ingredients.reduce((s, i) => s + (i.overall_bakers_pct || 0), 0) * 100).toFixed(1)}%
                         </td>
                         <td class="px-3 py-1.5 text-right tabular-nums">
-                          {formatGrams(comp.qty || comp.calculated.totals.total_weight)}
+                          {formatGrams(compRawQty || comp.calculated.totals.total_weight)}
                         </td>
                       </tr>
                     </tfoot>

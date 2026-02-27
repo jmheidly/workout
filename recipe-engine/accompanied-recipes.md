@@ -95,7 +95,7 @@ Allow a recipe to link to companion preparations (glazes, fillings, garnishes) t
 - Each companion row has: name (linked), editable qty (grams), role selector, notes, remove button
 - The companion's internal formula is shown as an inline summary (ingredient names, qty, internal BP%, total weight)
 - The Ingredients table contains only dough ingredients — its totals reflect the dough formula only
-- On the production page, companion ingredient quantities are scaled proportionally based on the qty defined in the parent
+- On the production page, companion ingredient quantities are scaled proportionally based on the qty defined in the parent, with loss adjustment applied from the companion recipe's own `process_loss_pct` and `bake_loss_pct` (raw qty and loss factors shown inline when non-zero)
 - Companion links are tracked in version snapshots; the versions comparison UI shows adds/removes/modifications
 
 ### Data Model (as implemented)
@@ -226,8 +226,6 @@ The engine previously hardcoded `FLOUR` as the baker's % denominator. Non-flour 
 ### Also Implemented: Ingredients Table BP% Improvements
 
 - **PREFERMENT rows** now show their ratio (`pf.base_qty / total_base_flour`) as BP% instead of the always-zero `overall_bakers_pct`
-- **Companion rows** show BP% as `companion.qty / total_formula_flour`
-- Both are included in the table totals
 
 ### Production Timeline Integration (§9 — future)
 
@@ -445,12 +443,12 @@ New route: `/(app)/recipes/templates/` — shared sub-recipe definitions reusabl
 | Section               | Phase 1 (Done)                       | Phase 2 (Done)                                                    | Phase 3 (Planned)             |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------- | ----------------------------- |
 | §3 Data Model         | New `recipe_companions` table + qty  | Alter `process_steps`; alter `recipes` (base_ingredient_category) | New `recipe_templates` table  |
-| §4 Calculation Engine | Companion BP% in ingredients table   | Engine uses `base_ingredient_category`; PF ratio as BP%           | None                          |
+| §4 Calculation Engine | None (companions are separate)       | Engine uses `base_ingredient_category`; PF ratio as BP%           | None                          |
 | §5 Pre-ferment System | None                                 | PF process step generation (`suggestPfProcessSteps`)              | Template source tracking      |
 | §8 Autolyse           | None                                 | None                                                              | None                          |
 | §9 Timeline (future)  | Companion production scheduling      | PF DAG critical path                                              | Template update notifications |
 | §10 Process Steps     | None                                 | New PF stages, `preferment_ingredient_id` FK                      | None                          |
-| §11 Loss/Waste        | Per-companion loss tracking           | None                                                              | None                          |
+| §11 Loss/Waste        | Per-companion loss tracking (done)    | None                                                              | None                          |
 | §12 Versioning        | Companion links in snapshots + diffs | PF steps in snapshots; `base_ingredient_category` in diffs        | Track template source version |
 | §15 Dough Type        | None                                 | Component types (TOPPING, GLAZE, FILLING, SAUCE); shadcn Select   | None                          |
 | Multi-tenancy         | Companions scoped to bakery          | None                                                              | Templates scoped to bakery    |
@@ -488,8 +486,8 @@ C4. ✅ Same companion linked to 2 parents → both parents see it
 C5. ✅ Self-link prevention → skipped on save (defense in depth)
 C6. ✅ Companion scoped to same bakery → verified on save
 C7. ✅ Version snapshot includes companion links with qty
-C8. ✅ Companion BP% computed relative to parent recipe's flour
-C9. ✅ Companion qty included in ingredients table totals
+C8. ✅ Companion qty editable in Accompanied Recipes card
+C9. ✅ Production page scales companion ingredients based on qty
 C10. ✅ Versions comparison shows companion add/remove/modify
 ```
 

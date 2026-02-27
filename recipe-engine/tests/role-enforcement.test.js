@@ -32,6 +32,7 @@ vi.mock('$lib/server/db.js', () => ({
   syncIngredientLibrary: vi.fn(),
   getRecipeVersions: vi.fn(() => []),
   getRecipeVersionCount: vi.fn(() => 0),
+  getParentsForRecipe: vi.fn(() => []),
 }))
 
 vi.mock('$lib/server/engine.js', () => ({

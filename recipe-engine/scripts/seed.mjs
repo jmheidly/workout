@@ -4,8 +4,7 @@
  */
 
 import Database from 'better-sqlite3'
-import { randomUUID } from 'crypto'
-import CryptoJS from 'crypto-js'
+import crypto, { randomUUID } from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -150,7 +149,13 @@ db.exec(`
 // Create demo user
 const DEMO_EMAIL = 'demo@example.com'
 const DEMO_PASSWORD = 'demo123'
-const passwordHash = CryptoJS.SHA256(DEMO_PASSWORD).toString()
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto.scryptSync(pw, salt, 64, { N: 16384 }).toString('hex')
+  return `${salt}:${hash}`
+}
+
+const passwordHash = hashPassword(DEMO_PASSWORD)
 
 let demoUser = db
   .prepare('SELECT id FROM users WHERE email = ?')
@@ -200,7 +205,7 @@ const bakeryId = existingBakery?.id || demoBakeryId
 
 const VIEWER_EMAIL = 'viewer@example.com'
 const VIEWER_PASSWORD = 'viewer123'
-const viewerHash = CryptoJS.SHA256(VIEWER_PASSWORD).toString()
+const viewerHash = hashPassword(VIEWER_PASSWORD)
 
 let viewerUser = db
   .prepare('SELECT id FROM users WHERE email = ?')

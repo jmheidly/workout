@@ -77,11 +77,13 @@ export async function GET({ url, cookies }) {
   cookies.delete('google_oauth_state', { path: '/' })
   cookies.delete('google_oauth_code_verifier', { path: '/' })
 
-  // Check for invite token
+  // Check for invite token (UUID format only)
   const inviteToken = cookies.get('oauth_invite_token')
   if (inviteToken) {
     cookies.delete('oauth_invite_token', { path: '/' })
-    redirect(302, `/invite/${inviteToken}`)
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inviteToken)) {
+      redirect(302, `/invite/${inviteToken}`)
+    }
   }
 
   if (isNewUser) {

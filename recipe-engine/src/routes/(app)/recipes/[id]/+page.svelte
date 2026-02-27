@@ -1201,6 +1201,11 @@
             oninput={scheduleCalc}
             class="w-full rounded-md border border-input bg-background px-3 py-2 text-lg font-semibold outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
           />
+          {#if data.usedInRecipes?.length > 0}
+            <p class="mt-1 text-xs text-muted-foreground">
+              Used in {data.usedInRecipes.map(r => r.recipe_name).join(', ')}
+            </p>
+          {/if}
         </div>
         <div class="w-48">
           <span class="mb-1.5 block text-xs font-medium text-muted-foreground">Dough Type</span>

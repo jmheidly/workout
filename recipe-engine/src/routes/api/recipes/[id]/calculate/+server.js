@@ -8,7 +8,7 @@ export async function POST({ request }) {
   try {
     const result = calculateRecipe(recipe)
     return json(result)
-  } catch (e) {
-    return json({ error: e.message }, { status: 400 })
+  } catch {
+    return json({ error: 'Calculation failed' }, { status: 400 })
   }
 }

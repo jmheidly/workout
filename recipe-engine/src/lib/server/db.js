@@ -703,6 +703,24 @@ export function getRecipesByBakery(bakeryId) {
 }
 
 /**
+ * Get parent recipes that link to this recipe as a companion.
+ * @param {string} companionRecipeId
+ * @returns {Array<{recipe_id: string, recipe_name: string, role: string, qty: number}>}
+ */
+export function getParentsForRecipe(companionRecipeId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT rc.recipe_id, r.name as recipe_name, rc.role, rc.qty
+       FROM recipe_companions rc
+       JOIN recipes r ON r.id = rc.recipe_id
+       WHERE rc.companion_recipe_id = ?
+       ORDER BY r.name`
+    )
+    .all(companionRecipeId)
+}
+
+/**
  * @param {string} id
  * @param {string} bakeryId
  * @param {RecipeInput} data
@@ -1464,7 +1482,10 @@ export function acceptInvitation(id) {
 }
 
 /** @param {string} id */
-export function deleteInvitation(id) {
+export function deleteInvitation(id, bakeryId) {
   const db = getDb()
-  db.prepare('DELETE FROM invitations WHERE id = ?').run(id)
+  db.prepare('DELETE FROM invitations WHERE id = ? AND bakery_id = ?').run(
+    id,
+    bakeryId
+  )
 }

@@ -60,9 +60,9 @@ export const actions = {
     const { token, expiresAt } = createSession(user.id)
     setSessionCookie(cookies, token, expiresAt)
 
-    // Check for invite token in query params
+    // Check for invite token in query params (UUID format only)
     const inviteToken = url.searchParams.get('invite')
-    if (inviteToken) {
+    if (inviteToken && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inviteToken)) {
       redirect(302, `/invite/${inviteToken}`)
     }
 

@@ -6,6 +6,7 @@ import {
   syncIngredientLibrary,
   getRecipeVersionCount,
   getRecipesByBakery,
+  getParentsForRecipe,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
@@ -42,6 +43,8 @@ export function load({ params, locals }) {
     }
   }
 
+  const usedInRecipes = getParentsForRecipe(params.id)
+
   return {
     recipe,
     calculated,
@@ -49,6 +52,7 @@ export function load({ params, locals }) {
     versionCount,
     bakeryRecipes,
     companionDetails,
+    usedInRecipes,
     canEdit: locals.bakery.role !== 'viewer',
   }
 }

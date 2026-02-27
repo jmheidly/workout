@@ -65,11 +65,13 @@ export const actions = {
     const id = form.get('id')?.toString()
     if (!id) return fail(400, { error: 'Missing invitation ID' })
 
-    deleteInvitation(id)
+    deleteInvitation(id, locals.bakery.id)
     return { success: true }
   },
 
   changeRole: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin')
+
     const form = await request.formData()
     const userId = form.get('user_id')?.toString()
     const role = form.get('role')?.toString()
@@ -90,8 +92,6 @@ export const actions = {
       role === 'admin'
     ) {
       requireRole(locals, 'owner')
-    } else {
-      requireRole(locals, 'owner', 'admin')
     }
 
     // Prevent removing last owner
@@ -108,6 +108,8 @@ export const actions = {
   },
 
   removeMember: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin')
+
     const form = await request.formData()
     const userId = form.get('user_id')?.toString()
     if (!userId) return fail(400, { error: 'Missing user ID' })
@@ -118,8 +120,6 @@ export const actions = {
     // Only owners can remove admins/owners
     if (target.role === 'owner' || target.role === 'admin') {
       requireRole(locals, 'owner')
-    } else {
-      requireRole(locals, 'owner', 'admin')
     }
 
     // Prevent removing last owner

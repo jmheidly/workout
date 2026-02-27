@@ -17,7 +17,7 @@ export function GET({ cookies, url: requestUrl }) {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 60 * 10,
   })
 
@@ -25,7 +25,7 @@ export function GET({ cookies, url: requestUrl }) {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 60 * 10,
   })
 
@@ -36,7 +36,7 @@ export function GET({ cookies, url: requestUrl }) {
       path: '/',
       httpOnly: true,
       sameSite: 'lax',
-      secure: false,
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 10,
     })
   }

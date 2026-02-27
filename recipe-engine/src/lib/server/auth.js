@@ -1,5 +1,4 @@
 import crypto from 'crypto'
-import CryptoJS from 'crypto-js'
 import { redirect, error } from '@sveltejs/kit'
 import {
   createSession as dbCreateSession,
@@ -12,28 +11,49 @@ import {
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
 const EXTEND_THRESHOLD_MS = 15 * 24 * 60 * 60 * 1000 // 15 days
 
+const SCRYPT_KEYLEN = 64
+const SCRYPT_COST = 16384 // N=2^14
+
 /** @returns {string} */
 export function generateSessionToken() {
   return crypto.randomBytes(32).toString('hex')
 }
 
 /**
- * Hash a password with SHA256
- * @param {string} password
+ * Hash a session token to a session ID (fast, non-secret mapping)
+ * @param {string} token
  * @returns {string}
  */
-export function hashPassword(password) {
-  return CryptoJS.SHA256(password).toString()
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
 }
 
 /**
- * Verify a password against a hash
+ * Hash a password with scrypt (salted, high work factor)
  * @param {string} password
- * @param {string} hash
+ * @returns {string} Format: salt:hash (both hex)
+ */
+export function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto
+    .scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_COST })
+    .toString('hex')
+  return `${salt}:${hash}`
+}
+
+/**
+ * Verify a password against a scrypt hash
+ * @param {string} password
+ * @param {string} stored - Format: salt:hash
  * @returns {boolean}
  */
-export function verifyPassword(password, hash) {
-  return CryptoJS.SHA256(password).toString() === hash
+export function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(':')
+  if (!salt || !hash) return false
+  const derived = crypto
+    .scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_COST })
+    .toString('hex')
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(derived, 'hex'))
 }
 
 /**
@@ -44,8 +64,7 @@ export function verifyPassword(password, hash) {
 export function createSession(userId) {
   const token = generateSessionToken()
   const expiresAt = Date.now() + SESSION_DURATION_MS
-  // Use SHA256 of token as session ID for storage
-  const sessionId = CryptoJS.SHA256(token).toString()
+  const sessionId = hashToken(token)
   dbCreateSession(sessionId, userId, expiresAt)
   return { token, expiresAt }
 }
@@ -56,7 +75,7 @@ export function createSession(userId) {
  * @returns {{ user: { id: string, email: string }, session: { id: string, expiresAt: number } } | null}
  */
 export function validateSession(token) {
-  const sessionId = CryptoJS.SHA256(token).toString()
+  const sessionId = hashToken(token)
   const session = dbGetSession(sessionId)
 
   if (!session) return null
@@ -89,7 +108,7 @@ export function validateSession(token) {
  * @param {string} token
  */
 export function invalidateSession(token) {
-  const sessionId = CryptoJS.SHA256(token).toString()
+  const sessionId = hashToken(token)
   dbDeleteSession(sessionId)
 }
 
@@ -107,7 +126,7 @@ export function setSessionCookie(cookies, token, expiresAt) {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
-    secure: false, // set to true in production
+    secure: process.env.NODE_ENV === 'production',
     expires: new Date(expiresAt),
   })
 }
