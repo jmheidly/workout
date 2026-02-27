@@ -15,6 +15,11 @@ export function getDb() {
     _db = new Database(DB_PATH)
     _db.pragma('journal_mode = WAL')
     _db.pragma('foreign_keys = ON')
+    _db.pragma('busy_timeout = 5000')
+    _db.pragma('synchronous = NORMAL')
+    _db.pragma('cache_size = -64000')
+    _db.pragma('mmap_size = 268435456')
+    _db.pragma('temp_store = MEMORY')
     initSchema(_db)
   }
   return _db
@@ -170,6 +175,17 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_otp ON password_reset_tokens(otp_code);
 
+    CREATE TABLE IF NOT EXISTS email_login_codes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_email_login_codes_user ON email_login_codes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_email_login_codes_code ON email_login_codes(code);
+
     CREATE TABLE IF NOT EXISTS recipe_templates (
       id TEXT PRIMARY KEY,
       bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
@@ -210,6 +226,7 @@ function initSchema(db) {
     'ALTER TABLE preferment_settings ADD COLUMN source_version INTEGER',
     'ALTER TABLE recipe_companions ADD COLUMN source_template_id TEXT REFERENCES recipe_templates(id) ON DELETE SET NULL',
     'ALTER TABLE recipe_companions ADD COLUMN source_version INTEGER',
+    'ALTER TABLE users ADD COLUMN email_verified_at TEXT',
   ]
   for (const sql of migrations) {
     try {
@@ -217,6 +234,15 @@ function initSchema(db) {
     } catch {
       // Column already exists — safe to ignore
     }
+  }
+
+  // Backfill: mark all existing users as verified so they aren't locked out
+  try {
+    db.exec(
+      "UPDATE users SET email_verified_at = datetime('now') WHERE email_verified_at IS NULL"
+    )
+  } catch {
+    // Safe to ignore
   }
 
   // Unique indexes
@@ -346,25 +372,27 @@ export function createUser(email, passwordHash, name) {
 
 /**
  * @param {string} email
- * @returns {{ id: string, email: string, name: string | null, password_hash: string, google_id: string | null } | undefined}
+ * @returns {{ id: string, email: string, name: string | null, password_hash: string, google_id: string | null, email_verified_at: string | null } | undefined}
  */
 export function getUserByEmail(email) {
   const db = getDb()
   return db
     .prepare(
-      'SELECT id, email, name, password_hash, google_id FROM users WHERE email = ?'
+      'SELECT id, email, name, password_hash, google_id, email_verified_at FROM users WHERE email = ?'
     )
     .get(email)
 }
 
 /**
  * @param {string} id
- * @returns {{ id: string, email: string, name: string | null, active_bakery_id: string | null } | undefined}
+ * @returns {{ id: string, email: string, name: string | null, active_bakery_id: string | null, email_verified_at: string | null } | undefined}
  */
 export function getUserById(id) {
   const db = getDb()
   return db
-    .prepare('SELECT id, email, name, active_bakery_id FROM users WHERE id = ?')
+    .prepare(
+      'SELECT id, email, name, active_bakery_id, email_verified_at FROM users WHERE id = ?'
+    )
     .get(id)
 }
 
@@ -389,7 +417,7 @@ export function createGoogleUser(email, name, googleId) {
   const db = getDb()
   const id = generateId()
   db.prepare(
-    'INSERT INTO users (id, email, name, google_id) VALUES (?, ?, ?, ?)'
+    "INSERT INTO users (id, email, name, google_id, email_verified_at) VALUES (?, ?, ?, ?, datetime('now'))"
   ).run(id, email, name, googleId)
   return { id, email, name }
 }
@@ -412,9 +440,21 @@ export function updateUser(id, fields) {
     sets.push('google_id = ?')
     values.push(fields.google_id)
   }
+  if (fields.email_verified_at !== undefined) {
+    sets.push('email_verified_at = ?')
+    values.push(fields.email_verified_at)
+  }
   if (sets.length === 0) return
   values.push(id)
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+}
+
+/** @param {string} userId */
+export function markEmailVerified(userId) {
+  const db = getDb()
+  db.prepare(
+    "UPDATE users SET email_verified_at = datetime('now') WHERE id = ?"
+  ).run(userId)
 }
 
 /**
@@ -1829,6 +1869,55 @@ export function markPasswordResetTokenUsed(id) {
   ).run(id)
 }
 
+// ─── Email Login Codes ───────────────────────────────────────────────────────
+
+/** @param {string} userId */
+export function invalidateLoginCodes(userId) {
+  const db = getDb()
+  db.prepare(
+    "UPDATE email_login_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL"
+  ).run(userId)
+}
+
+/**
+ * @param {string} userId
+ * @param {string} code
+ * @param {string} expiresAt
+ */
+export function createLoginCode(userId, code, expiresAt) {
+  const db = getDb()
+  const id = generateId()
+  db.prepare(
+    'INSERT INTO email_login_codes (id, user_id, code, expires_at) VALUES (?, ?, ?, ?)'
+  ).run(id, userId, code, expiresAt)
+  return { id, user_id: userId, code, expires_at: expiresAt }
+}
+
+/** @param {string} code */
+export function getLoginCode(code) {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM email_login_codes WHERE code = ? AND used_at IS NULL')
+    .get(code)
+}
+
+/** @param {string} id */
+export function markLoginCodeUsed(id) {
+  const db = getDb()
+  db.prepare(
+    "UPDATE email_login_codes SET used_at = datetime('now') WHERE id = ?"
+  ).run(id)
+}
+
+/** @param {string} id */
+export function incrementLoginCodeAttempts(id) {
+  const db = getDb()
+  db.prepare(
+    'UPDATE email_login_codes SET attempts = attempts + 1 WHERE id = ?'
+  ).run(id)
+  return db.prepare('SELECT attempts FROM email_login_codes WHERE id = ?').get(id)?.attempts ?? 0
+}
+
 /**
  * @param {string} userId
  * @param {string} passwordHash
@@ -1875,7 +1964,10 @@ export function deleteUser(userId) {
       userId
     )
 
-    // 5. Delete user record (ON DELETE CASCADE handles any remaining FKs)
+    // 5. Delete email login codes
+    db.prepare('DELETE FROM email_login_codes WHERE user_id = ?').run(userId)
+
+    // 6. Delete user record (ON DELETE CASCADE handles any remaining FKs)
     db.prepare('DELETE FROM users WHERE id = ?').run(userId)
   })
   txn()

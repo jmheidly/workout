@@ -58,10 +58,14 @@ export async function GET({ url, cookies }) {
     // Check if user exists by email (link accounts)
     const existingByEmail = getUserByEmail(email)
     if (existingByEmail) {
-      updateUser(existingByEmail.id, {
+      const fields = {
         google_id: googleId,
         name: name || existingByEmail.name,
-      })
+      }
+      if (!existingByEmail.email_verified_at) {
+        fields.email_verified_at = new Date().toISOString()
+      }
+      updateUser(existingByEmail.id, fields)
       user = existingByEmail
     } else {
       // New user

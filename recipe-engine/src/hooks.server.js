@@ -1,5 +1,16 @@
+import { redirect } from '@sveltejs/kit'
 import { validateSession, SESSION_COOKIE } from '$lib/server/auth.js'
 import { getUserById, getBakeryMember, getBakery } from '$lib/server/db.js'
+
+const VERIFY_BYPASS_PATHS = [
+  '/verify-email',
+  '/login',
+  '/logout',
+  '/signup',
+  '/health',
+  '/terms',
+  '/privacy',
+]
 
 /** @type {import('@sveltejs/kit').Handle} */
 export async function handle({ event, resolve }) {
@@ -25,6 +36,17 @@ export async function handle({ event, resolve }) {
               role: member.role,
             }
           }
+        }
+      }
+
+      // Gate unverified users → redirect to /verify-email
+      if (!result.user.email_verified_at) {
+        const path = event.url.pathname
+        const allowed = VERIFY_BYPASS_PATHS.some(
+          (p) => path === p || path.startsWith(p + '/')
+        )
+        if (!allowed) {
+          redirect(302, '/verify-email')
         }
       }
     }

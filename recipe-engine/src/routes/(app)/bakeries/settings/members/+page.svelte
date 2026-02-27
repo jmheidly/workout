@@ -26,9 +26,30 @@
     return null
   })
 
+  let resetLink = $derived.by(() => {
+    if (form?.resetToken) {
+      return `${$page.url.origin}/reset-password/${form.resetToken}`
+    }
+    return null
+  })
+
+  let resetOtp = $derived(form?.resetOtp ?? null)
+
   function copyLink() {
     if (inviteLink) {
       navigator.clipboard.writeText(inviteLink)
+    }
+  }
+
+  function copyResetLink() {
+    if (resetLink) {
+      navigator.clipboard.writeText(resetLink)
+    }
+  }
+
+  function copyOtp() {
+    if (resetOtp) {
+      navigator.clipboard.writeText(resetOtp)
     }
   }
 </script>
@@ -53,7 +74,7 @@
 
       {#if inviteLink}
         <div class="mb-4 rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-          <p class="mb-2">Invitation created! Share this link:</p>
+          <p class="mb-2">{form?.emailSent ? 'Invitation created and email sent!' : 'Invitation created!'} Share this link as a fallback:</p>
           <div class="flex gap-2">
             <input
               type="text"
@@ -63,6 +84,28 @@
             />
             <Button size="sm" variant="outline" onclick={copyLink}>Copy</Button>
           </div>
+        </div>
+      {/if}
+
+      {#if resetLink}
+        <div class="mb-4 rounded-md bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+          <p class="mb-2 font-medium">{form?.emailSent ? 'Password reset email sent!' : 'Password reset created!'} You can also share the link or code below (expires in 1 hour):</p>
+          <div class="flex gap-2">
+            <input
+              type="text"
+              readonly
+              value={resetLink}
+              class="flex-1 rounded border bg-background px-2 py-1 text-xs"
+            />
+            <Button size="sm" variant="outline" onclick={copyResetLink}>Copy Link</Button>
+          </div>
+          {#if resetOtp}
+            <div class="mt-2 flex items-center gap-3">
+              <span class="text-xs text-muted-foreground">Or share this code:</span>
+              <span class="font-mono text-lg font-bold tracking-widest">{resetOtp}</span>
+              <Button size="sm" variant="outline" onclick={copyOtp}>Copy Code</Button>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -143,6 +186,12 @@
                     </select>
                   </form>
                 {/if}
+                <form method="POST" action="?/resetPassword" use:enhance>
+                  <input type="hidden" name="user_id" value={member.user_id} />
+                  <Button type="submit" variant="ghost" size="sm" class="h-7">
+                    Reset PW
+                  </Button>
+                </form>
                 <form method="POST" action="?/removeMember" use:enhance>
                   <input type="hidden" name="user_id" value={member.user_id} />
                   <Button type="submit" variant="ghost" size="sm" class="h-7 text-destructive hover:text-destructive">

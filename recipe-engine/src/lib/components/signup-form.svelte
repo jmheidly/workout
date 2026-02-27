@@ -5,9 +5,11 @@
   import { Input } from '$lib/components/ui/input/index.js'
   import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
+  import * as ButtonGroup from '$lib/components/ui/button-group/index.js'
 
   let { form } = $props()
   let loading = $state(false)
+  let passwordless = $state(false)
 
   const id = $props.id()
   let invite = $derived($page.url.searchParams.get('invite'))
@@ -43,6 +45,23 @@
           </div>
         {/if}
 
+        <ButtonGroup.Root class="w-full">
+          <Button
+            variant={!passwordless ? 'secondary' : 'ghost'}
+            class="flex-1"
+            onclick={() => { passwordless = false }}
+          >
+            Password
+          </Button>
+          <Button
+            variant={passwordless ? 'secondary' : 'ghost'}
+            class="flex-1"
+            onclick={() => { passwordless = true }}
+          >
+            Passwordless
+          </Button>
+        </ButtonGroup.Root>
+
         <form
           method="POST"
           use:enhance={() => {
@@ -53,6 +72,7 @@
             }
           }}
         >
+          <input type="hidden" name="passwordless" value={passwordless ? '1' : ''} />
           <FieldGroup>
             <Field>
               <FieldLabel for="{id}-name">Full Name</FieldLabel>
@@ -76,28 +96,30 @@
                 placeholder="you@example.com"
               />
             </Field>
-            <Field>
-              <FieldLabel for="{id}-password">Password</FieldLabel>
-              <Input
-                id="{id}-password"
-                name="password"
-                type="password"
-                required
-                minlength="6"
-              />
-            </Field>
-            <Field>
-              <FieldLabel for="{id}-confirm-password">Confirm Password</FieldLabel>
-              <Input
-                id="{id}-confirm-password"
-                name="confirmPassword"
-                type="password"
-                required
-                minlength="6"
-              />
-            </Field>
+            {#if !passwordless}
+              <Field>
+                <FieldLabel for="{id}-password">Password</FieldLabel>
+                <Input
+                  id="{id}-password"
+                  name="password"
+                  type="password"
+                  required
+                  minlength="6"
+                />
+              </Field>
+              <Field>
+                <FieldLabel for="{id}-confirm-password">Confirm Password</FieldLabel>
+                <Input
+                  id="{id}-confirm-password"
+                  name="confirmPassword"
+                  type="password"
+                  required
+                  minlength="6"
+                />
+              </Field>
+            {/if}
             <Button type="submit" class="w-full" disabled={loading}>
-              {loading ? 'Creating account...' : 'Create account'}
+              {loading ? 'Creating account...' : passwordless ? 'Sign up with email code' : 'Create account'}
             </Button>
           </FieldGroup>
         </form>
@@ -105,6 +127,12 @@
         <div class="text-center text-sm">
           Already have an account?
           <a href={loginHref} class="underline underline-offset-4">Sign in</a>
+        </div>
+
+        <div class="text-center text-xs text-muted-foreground">
+          <a href="/terms" class="underline underline-offset-4">Terms of Service</a>
+          <span class="mx-1">&middot;</span>
+          <a href="/privacy" class="underline underline-offset-4">Privacy Policy</a>
         </div>
       </div>
     </Card.CardContent>

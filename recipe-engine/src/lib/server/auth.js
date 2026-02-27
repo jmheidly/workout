@@ -98,7 +98,12 @@ export function validateSession(token) {
   }
 
   return {
-    user: { id: user.id, email: user.email, name: user.name || null },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name || null,
+      email_verified_at: user.email_verified_at || null,
+    },
     session: { id: sessionId, expiresAt: session.expires_at },
   }
 }

@@ -33,6 +33,7 @@ vi.mock('$lib/server/db.js', () => ({
   getRecipeVersions: vi.fn(() => []),
   getRecipeVersionCount: vi.fn(() => 0),
   getParentsForRecipe: vi.fn(() => []),
+  getBakerySettings: vi.fn(() => ({})),
 }))
 
 vi.mock('$lib/server/engine.js', () => ({

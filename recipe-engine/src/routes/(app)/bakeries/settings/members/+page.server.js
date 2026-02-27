@@ -9,7 +9,14 @@ import {
   updateBakeryMemberRole,
   removeBakeryMember,
   getBakeryMember,
+  createPasswordResetToken,
+  getUserById,
 } from '$lib/server/db.js'
+import {
+  sendEmail,
+  passwordResetEmail,
+  invitationEmail,
+} from '$lib/server/email.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -21,7 +28,7 @@ export function load({ locals }) {
 
 /** @type {import('./$types').Actions} */
 export const actions = {
-  invite: async ({ request, locals }) => {
+  invite: async ({ request, locals, url }) => {
     requireRole(locals, 'owner', 'admin')
 
     const form = await request.formData()
@@ -55,7 +62,11 @@ export const actions = {
       throw e
     }
 
-    return { success: true, inviteToken: token }
+    const inviteUrl = `${url.origin}/invite/${token}`
+    const inv = invitationEmail(locals.bakery.name, role, inviteUrl)
+    sendEmail(email, inv.subject, inv.html)
+
+    return { success: true, inviteToken: token, emailSent: true }
   },
 
   cancelInvite: async ({ request, locals }) => {
@@ -133,5 +144,36 @@ export const actions = {
 
     removeBakeryMember(locals.bakery.id, userId)
     return { success: true }
+  },
+
+  resetPassword: async ({ request, locals, url }) => {
+    requireRole(locals, 'owner', 'admin')
+
+    const form = await request.formData()
+    const userId = form.get('user_id')?.toString()
+    if (!userId) return fail(400, { error: 'Missing user ID' })
+
+    const target = getBakeryMember(locals.bakery.id, userId)
+    if (!target) return fail(404, { error: 'Member not found' })
+
+    // Only owners can reset admin/owner passwords
+    if (target.role === 'owner' || target.role === 'admin') {
+      requireRole(locals, 'owner')
+    }
+
+    const token = crypto.randomUUID()
+    const otpCode = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+    createPasswordResetToken(target.user_id, token, otpCode, expiresAt)
+
+    const targetUser = getUserById(target.user_id)
+    if (targetUser?.email) {
+      const resetUrl = `${url.origin}/reset-password/${token}`
+      const reset = passwordResetEmail(resetUrl, otpCode)
+      sendEmail(targetUser.email, reset.subject, reset.html)
+    }
+
+    return { success: true, resetToken: token, resetOtp: otpCode, emailSent: true }
   },
 }
