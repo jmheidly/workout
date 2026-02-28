@@ -7,6 +7,7 @@
 
   let { data, form } = $props()
   let loading = $state(false)
+  let settingsLoading = $state(false)
   let deleteConfirm = $state(false)
 </script>
 
@@ -65,6 +66,57 @@
     </Card.CardHeader>
     <Card.CardContent>
       <Button href="/bakeries/settings/members" variant="outline">Manage Members</Button>
+    </Card.CardContent>
+  </Card.Card>
+
+  <Card.Card>
+    <Card.CardHeader>
+      <Card.CardTitle>Production Settings</Card.CardTitle>
+      <Card.CardDescription>Configure production tracking defaults</Card.CardDescription>
+    </Card.CardHeader>
+    <Card.CardContent>
+      {#if form?.settingsError}
+        <div class="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+          {form.settingsError}
+        </div>
+      {/if}
+      {#if form?.settingsSuccess}
+        <div class="mb-4 rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
+          Production settings updated.
+        </div>
+      {/if}
+
+      <form
+        method="POST"
+        action="?/updateSettings"
+        use:enhance={() => {
+          settingsLoading = true
+          return async ({ update }) => {
+            settingsLoading = false
+            await update({ reset: false })
+          }
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel for="rolling-window">Rolling Average Window</FieldLabel>
+            <Input
+              id="rolling-window"
+              name="rolling_average_window"
+              type="number"
+              min="1"
+              max="100"
+              value={data.bakerySettings?.rolling_average_window || 10}
+            />
+            <p class="mt-1 text-xs text-muted-foreground">
+              Number of recent sessions used to compute rolling loss averages (1-100).
+            </p>
+          </Field>
+          <Button type="submit" disabled={settingsLoading}>
+            {settingsLoading ? 'Saving...' : 'Save Settings'}
+          </Button>
+        </FieldGroup>
+      </form>
     </Card.CardContent>
   </Card.Card>
 

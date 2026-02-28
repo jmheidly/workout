@@ -1,6 +1,15 @@
-import { error } from '@sveltejs/kit'
-import { getRecipe, getMixerProfiles } from '$lib/server/db.js'
+import { error, fail } from '@sveltejs/kit'
+import {
+  getRecipe,
+  getMixerProfiles,
+  getBatchSessionsForRecipe,
+  getRollingAverages,
+  getBakerySettings,
+  createBatchSession,
+  deleteBatchSession,
+} from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
+import { requireRole } from '$lib/server/auth.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
@@ -34,5 +43,80 @@ export function load({ params, locals }) {
     })
     .filter(Boolean)
 
-  return { recipe, calculated, mixerProfiles, companionDetails }
+  const settings = getBakerySettings(locals.bakery.id)
+  const rollingWindow = settings.rolling_average_window || 10
+  const batchSessions = getBatchSessionsForRecipe(
+    params.id,
+    locals.bakery.id
+  )
+  const rollingAverages = getRollingAverages(
+    params.id,
+    locals.bakery.id,
+    rollingWindow
+  )
+  const canEdit = locals.bakery.role !== 'viewer'
+
+  return {
+    recipe,
+    calculated,
+    mixerProfiles,
+    companionDetails,
+    batchSessions,
+    rollingAverages,
+    rollingWindow,
+    canEdit,
+  }
+}
+
+/** @type {import('./$types').Actions} */
+export const actions = {
+  createSession: async ({ request, params, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
+
+    const form = await request.formData()
+    let data
+    try {
+      data = JSON.parse(form.get('data')?.toString() || '{}')
+    } catch {
+      return fail(400, { error: 'Invalid data' })
+    }
+
+    if (
+      !data.planned_total_weight ||
+      data.planned_total_weight <= 0 ||
+      !data.planned_pieces ||
+      data.planned_pieces <= 0 ||
+      data.planned_piece_weight == null
+    ) {
+      return fail(400, { error: 'Planned values are required' })
+    }
+
+    const hasMeasured =
+      data.dough_weight_off_mixer != null ||
+      data.pieces_loaded != null ||
+      data.finished_piece_weight != null
+    if (!hasMeasured) {
+      return fail(400, {
+        error: 'At least one measured value is required',
+      })
+    }
+
+    createBatchSession(locals.user.id, locals.bakery.id, {
+      ...data,
+      recipe_id: params.id,
+    })
+
+    return { success: true }
+  },
+
+  deleteSession: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
+
+    const form = await request.formData()
+    const id = form.get('id')?.toString()
+    if (!id) return fail(400, { error: 'Session ID required' })
+
+    deleteBatchSession(id, locals.bakery.id)
+    return { success: true }
+  },
 }

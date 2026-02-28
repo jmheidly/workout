@@ -6,6 +6,8 @@ import {
   updateBakery,
   deleteBakery,
   getBakerySubscription,
+  getBakerySettings,
+  updateBakerySettings,
 } from '$lib/server/db.js'
 import { getStripe } from '$lib/server/stripe.js'
 
@@ -13,7 +15,8 @@ import { getStripe } from '$lib/server/stripe.js'
 export function load({ locals }) {
   requireRole(locals, 'owner', 'admin')
   const bakery = getBakery(locals.bakery.id)
-  return { bakeryDetails: bakery }
+  const bakerySettings = getBakerySettings(locals.bakery.id)
+  return { bakeryDetails: bakery, bakerySettings }
 }
 
 /** @type {import('./$types').Actions} */
@@ -42,6 +45,24 @@ export const actions = {
 
     updateBakery(locals.bakery.id, { name, slug })
     return { success: true }
+  },
+
+  updateSettings: async ({ request, locals }) => {
+    requireRole(locals, 'owner', 'admin')
+
+    const form = await request.formData()
+    const windowStr = form.get('rolling_average_window')?.toString()
+    const window = parseInt(windowStr, 10)
+
+    if (isNaN(window) || window < 1 || window > 100) {
+      return fail(400, { settingsError: 'Window must be between 1 and 100' })
+    }
+
+    updateBakerySettings(locals.bakery.id, {
+      rolling_average_window: window,
+    })
+
+    return { settingsSuccess: true }
   },
 
   delete: async ({ locals }) => {

@@ -1,5 +1,5 @@
 <script>
-  import { formatGrams } from '$lib/utils.js'
+  import { formatGrams, formatPct } from '$lib/utils.js'
   import { calcWaterTemp } from '$lib/water-temp.js'
   import {
     FERMENTATION_DEFAULTS,
@@ -9,6 +9,8 @@
   } from '$lib/preferment-defaults.js'
   import { MIX_TYPES, effectiveFriction, calcMixDurations } from '$lib/mixing.js'
   import { computeTimeline } from '$lib/timeline.js'
+  import { enhance } from '$app/forms'
+  import { toast } from 'svelte-sonner'
   import { Button } from '$lib/components/ui/button/index.js'
   import {
     Card,
@@ -20,7 +22,59 @@
   import MixerPicker from '$lib/components/mixer-picker.svelte'
   import TimelineChart from '$lib/components/timeline-chart.svelte'
 
-  let { data } = $props()
+  let { data, form } = $props()
+
+  // ── Batch Scaling (view-layer only) ────────────────────
+
+  let scaleMode = $state('pieces') // 'pieces' | 'dough' | 'flour'
+  let scaleTarget = $state(null) // null = use recipe default
+
+  let defaultTarget = $derived.by(() => {
+    const t = data.calculated?.totals
+    if (!t) return 0
+    if (scaleMode === 'pieces') return Math.round(t.num_pieces)
+    if (scaleMode === 'dough') return Math.round(t.total_weight)
+    if (scaleMode === 'flour') return Math.round(t.total_flour)
+    return 0
+  })
+
+  let activeTarget = $derived(scaleTarget ?? defaultTarget)
+
+  let scaleFactor = $derived.by(() => {
+    const t = data.calculated?.totals
+    if (!t || !activeTarget) return 1
+    if (scaleMode === 'pieces')
+      return t.num_pieces > 0 ? activeTarget / t.num_pieces : 1
+    if (scaleMode === 'dough')
+      return t.total_weight > 0 ? activeTarget / t.total_weight : 1
+    if (scaleMode === 'flour')
+      return t.total_flour > 0 ? activeTarget / t.total_flour : 1
+    return 1
+  })
+
+  // Reset target when mode changes
+  let prevMode = $state('pieces')
+  $effect(() => {
+    if (scaleMode !== prevMode) {
+      scaleTarget = null
+      prevMode = scaleMode
+    }
+  })
+
+  let piecesDisabled = $derived(
+    !data.recipe.yield_per_piece || data.recipe.yield_per_piece === 0
+  )
+  let flourDisabled = $derived(
+    !data.calculated?.totals?.total_flour ||
+      data.calculated.totals.total_flour === 0
+  )
+
+  // If pieces disabled and currently on pieces, switch to dough
+  $effect(() => {
+    if (piecesDisabled && scaleMode === 'pieces') {
+      scaleMode = 'dough'
+    }
+  })
 
   // ── Mixer Selection (session-only, not saved to recipe) ──
 
@@ -194,6 +248,85 @@
     if (min < 1) return `${(min * 60).toFixed(0)}s`
     return `${min.toFixed(1)} min`
   }
+
+  // ── Batch Log State ──────────────────────────────────────
+
+  let showBatchForm = $state(false)
+  let batchDate = $state(new Date().toISOString().slice(0, 10))
+  let doughWeightOff = $state(null)
+  let piecesLoaded = $state(null)
+  let finishedPieceWeight = $state(null)
+  let batchNotes = $state('')
+  let batchSubmitting = $state(false)
+
+  let plannedTotalWeight = $derived(
+    (data.calculated?.totals?.total_weight || 0) * scaleFactor
+  )
+  let plannedPieces = $derived(
+    Math.round((data.calculated?.totals?.num_pieces || 0) * scaleFactor)
+  )
+  let plannedPieceWeight = $derived(data.recipe.yield_per_piece || 0)
+
+  let previewProcessLoss = $derived.by(() => {
+    if (doughWeightOff == null || !plannedTotalWeight) return null
+    return 1 - doughWeightOff / plannedTotalWeight
+  })
+
+  let previewBakeLoss = $derived.by(() => {
+    if (
+      doughWeightOff == null ||
+      piecesLoaded == null ||
+      piecesLoaded <= 0 ||
+      finishedPieceWeight == null
+    )
+      return null
+    const preBake = doughWeightOff / piecesLoaded
+    if (preBake <= 0) return null
+    return 1 - finishedPieceWeight / preBake
+  })
+
+  let batchFormData = $derived(
+    JSON.stringify({
+      session_date: batchDate,
+      planned_total_weight: plannedTotalWeight,
+      planned_pieces: plannedPieces,
+      planned_piece_weight: plannedPieceWeight,
+      scale_factor: scaleFactor,
+      dough_weight_off_mixer: doughWeightOff,
+      pieces_loaded: piecesLoaded,
+      finished_piece_weight: finishedPieceWeight,
+      notes: batchNotes || null,
+    })
+  )
+
+  function resetBatchForm() {
+    showBatchForm = false
+    batchDate = new Date().toISOString().slice(0, 10)
+    doughWeightOff = null
+    piecesLoaded = null
+    finishedPieceWeight = null
+    batchNotes = ''
+  }
+
+  // ── Drift Detection ────────────────────────────────────
+
+  const DRIFT_THRESHOLD = 0.02
+
+  let processLossDrift = $derived.by(() => {
+    const avg = data.rollingAverages?.avg_process_loss_pct
+    if (avg == null) return null
+    const recipe = data.recipe.process_loss_pct || 0
+    const diff = avg - recipe
+    return Math.abs(diff) >= DRIFT_THRESHOLD ? diff : null
+  })
+
+  let bakeLossDrift = $derived.by(() => {
+    const avg = data.rollingAverages?.avg_bake_loss_pct
+    if (avg == null) return null
+    const recipe = data.recipe.bake_loss_pct || 0
+    const diff = avg - recipe
+    return Math.abs(diff) >= DRIFT_THRESHOLD ? diff : null
+  })
 </script>
 
 <div class="sticky top-14 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm">
@@ -299,6 +432,84 @@
           </div>
         </div>
       </div>
+      <!-- Batch Scaling -->
+      {#if data.calculated}
+        <div class="mt-4 border-t border-border pt-4">
+          <div class="flex flex-wrap items-center gap-4">
+            <div>
+              <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Scale By</label>
+              <div class="flex rounded-md border border-input">
+                <button
+                  type="button"
+                  disabled={piecesDisabled}
+                  class="px-3 py-2 text-xs rounded-l-md transition-colors {scaleMode === 'pieces'
+                    ? 'bg-primary text-primary-foreground'
+                    : piecesDisabled
+                      ? 'text-muted-foreground/40 cursor-not-allowed'
+                      : 'hover:bg-muted'}"
+                  onclick={() => { scaleMode = 'pieces' }}
+                >
+                  Pieces
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-2 text-xs border-x border-input transition-colors {scaleMode === 'dough'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'hover:bg-muted'}"
+                  onclick={() => { scaleMode = 'dough' }}
+                >
+                  Total Dough
+                </button>
+                <button
+                  type="button"
+                  disabled={flourDisabled}
+                  class="px-3 py-2 text-xs rounded-r-md transition-colors {scaleMode === 'flour'
+                    ? 'bg-primary text-primary-foreground'
+                    : flourDisabled
+                      ? 'text-muted-foreground/40 cursor-not-allowed'
+                      : 'hover:bg-muted'}"
+                  onclick={() => { scaleMode = 'flour' }}
+                >
+                  Total Flour
+                </button>
+              </div>
+            </div>
+            <div class="w-32">
+              <label for="scale-target" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">
+                Target ({scaleMode === 'pieces' ? 'pcs' : 'g'})
+              </label>
+              <input
+                id="scale-target"
+                type="number"
+                min="0"
+                step={scaleMode === 'pieces' ? 1 : 10}
+                value={activeTarget}
+                oninput={(e) => { scaleTarget = Number(e.target.value) || 0 }}
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+              />
+            </div>
+            <div>
+              <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Scale</label>
+              <Badge
+                variant="secondary"
+                class="text-sm tabular-nums {Math.abs(scaleFactor - 1) > 0.005 ? 'border-amber-300 bg-amber-50 text-amber-700' : ''}"
+              >
+                {scaleFactor.toFixed(2)}x
+              </Badge>
+            </div>
+          </div>
+          <p class="mt-2 text-xs text-muted-foreground tabular-nums">
+            {#if scaleMode === 'pieces' && data.calculated.totals.num_pieces > 0}
+              Recipe: {Math.round(data.calculated.totals.num_pieces)} pcs &times; {formatGrams(data.recipe.yield_per_piece || 0)}
+            {:else if scaleMode === 'dough'}
+              Recipe: {formatGrams(data.calculated.totals.total_weight)} dough
+            {:else if scaleMode === 'flour'}
+              Recipe: {formatGrams(data.calculated.totals.total_flour)} flour
+            {/if}
+          </p>
+        </div>
+      {/if}
+
       {#if timeline}
         <div class="mt-3 flex flex-wrap items-center gap-3">
           {#if scheduleMode === 'reverse' && timeline.computedMixTime}
@@ -341,6 +552,423 @@
       </CardContent>
     </Card>
   {/if}
+
+  <!-- ── Production Quantities Card ────────────────────── -->
+
+  {#if data.calculated && data.calculated.ingredients.length > 0}
+    {@const calc = data.calculated}
+    {@const scaledPieces = Math.round(calc.totals.num_pieces * scaleFactor)}
+    <Card>
+      <CardHeader class="pb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+            Production Quantities
+          </CardTitle>
+          {#if Math.abs(scaleFactor - 1) > 0.005}
+            <Badge variant="secondary" class="border-amber-300 bg-amber-50 text-amber-700 font-normal tabular-nums">
+              {scaleFactor.toFixed(2)}x scale
+            </Badge>
+          {/if}
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-6">
+        <!-- Main Ingredient Table -->
+        <div class="overflow-x-auto rounded-lg border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2 font-medium">Ingredient</th>
+                <th class="px-3 py-2 font-medium text-right">Per Item</th>
+                <th class="px-3 py-2 font-medium text-right">
+                  Batch ({scaledPieces} pcs)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each calc.ingredients as ing}
+                <tr class="border-b border-border last:border-b-0">
+                  <td class="px-3 py-1.5">
+                    <span class="font-medium">{ing.name}</span>
+                    <Badge variant="secondary" class="ml-1.5 text-[9px] font-normal">{ing.category}</Badge>
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">{formatGrams(ing.per_item_weight)}</td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">{formatGrams(ing.batch_qty * scaleFactor)}</td>
+                </tr>
+              {/each}
+            </tbody>
+            <tfoot>
+              <tr class="border-t border-border bg-muted/30 font-medium">
+                <td class="px-3 py-1.5">Total</td>
+                <td class="px-3 py-1.5 text-right tabular-nums">
+                  {formatGrams(calc.totals.raw_yield_per_piece || 0)}
+                </td>
+                <td class="px-3 py-1.5 text-right tabular-nums">
+                  {formatGrams(calc.totals.total_weight * scaleFactor)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- PF Breakdowns (inline) -->
+        {#each (calc.preferments || []).filter((p) => p.enabled && Object.keys(p.breakdown).length > 0) as pf (pf.id)}
+          <div>
+            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-700">
+              {pf.name}
+              <Badge variant="secondary" class="ml-1 bg-indigo-50 text-indigo-700 text-[9px] font-normal">{pf.type}</Badge>
+            </h4>
+            <div class="space-y-1">
+              {#each Object.entries(pf.breakdown) as [name, qty]}
+                <div class="flex items-center justify-between rounded-md bg-indigo-50/50 px-3 py-1.5 text-sm">
+                  <span class="font-medium">{name}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(qty * scaleFactor)}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/each}
+
+        <!-- Autolyse Split (inline) -->
+        {#if calc.autolyse}
+          {@const auto = calc.autolyse}
+          <div>
+            <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-teal-700">Autolyse Split</h4>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <span class="mb-1 block text-[10px] font-medium text-teal-600">Autolyse Mix</span>
+                <div class="space-y-1">
+                  {#each auto.autolyse_ingredients as ing}
+                    <div class="flex items-center justify-between rounded-md bg-teal-50/50 px-3 py-1.5 text-sm">
+                      <span class="font-medium">{ing.name}</span>
+                      <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty * scaleFactor)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div>
+                <span class="mb-1 block text-[10px] font-medium text-muted-foreground">Final Mix (after rest)</span>
+                <div class="space-y-1">
+                  {#each auto.final_mix_ingredients as ing}
+                    <div class="flex items-center justify-between rounded-md bg-muted/30 px-3 py-1.5 text-sm">
+                      <span class="font-medium">{ing.name}</span>
+                      <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty * scaleFactor)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- ── Rolling Averages + Drift Alerts Card ────────── -->
+
+  {#if data.batchSessions && data.batchSessions.length > 0}
+    {@const ra = data.rollingAverages}
+    <Card>
+      <CardHeader class="pb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Rolling Averages
+          </CardTitle>
+          <Badge variant="secondary" class="font-normal">
+            Last {data.rollingWindow} sessions
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <!-- Process Loss -->
+          <div class="rounded-lg border border-border p-3">
+            <div class="mb-1 text-xs font-medium text-muted-foreground">Process Loss</div>
+            {#if ra.avg_process_loss_pct != null}
+              <div class="text-lg font-bold tabular-nums">
+                {formatPct(ra.avg_process_loss_pct)}
+              </div>
+              <div class="text-xs text-muted-foreground tabular-nums">
+                Recipe: {formatPct(data.recipe.process_loss_pct || 0)}
+                <span class="ml-1 text-muted-foreground/60">({ra.process_session_count} sessions)</span>
+              </div>
+              {#if processLossDrift != null}
+                <Badge
+                  variant="secondary"
+                  class="mt-1.5 font-normal text-[10px] {processLossDrift > 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-blue-300 bg-blue-50 text-blue-700'}"
+                >
+                  {processLossDrift > 0 ? '+' : ''}{(processLossDrift * 100).toFixed(1)}pp drift
+                </Badge>
+              {/if}
+            {:else}
+              <div class="text-sm text-muted-foreground">No data yet</div>
+            {/if}
+          </div>
+          <!-- Bake Loss -->
+          <div class="rounded-lg border border-border p-3">
+            <div class="mb-1 text-xs font-medium text-muted-foreground">Bake Loss</div>
+            {#if ra.avg_bake_loss_pct != null}
+              <div class="text-lg font-bold tabular-nums">
+                {formatPct(ra.avg_bake_loss_pct)}
+              </div>
+              <div class="text-xs text-muted-foreground tabular-nums">
+                Recipe: {formatPct(data.recipe.bake_loss_pct || 0)}
+                <span class="ml-1 text-muted-foreground/60">({ra.bake_session_count} sessions)</span>
+              </div>
+              {#if bakeLossDrift != null}
+                <Badge
+                  variant="secondary"
+                  class="mt-1.5 font-normal text-[10px] {bakeLossDrift > 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-blue-300 bg-blue-50 text-blue-700'}"
+                >
+                  {bakeLossDrift > 0 ? '+' : ''}{(bakeLossDrift * 100).toFixed(1)}pp drift
+                </Badge>
+              {/if}
+            {:else}
+              <div class="text-sm text-muted-foreground">No data yet</div>
+            {/if}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- ── Batch Log Card ──────────────────────────────────── -->
+
+  <Card>
+    <CardHeader class="pb-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          Batch Log
+        </CardTitle>
+        {#if data.batchSessions && data.batchSessions.length > 0}
+          <Badge variant="secondary" class="font-normal">
+            {data.batchSessions.length} session{data.batchSessions.length !== 1 ? 's' : ''}
+          </Badge>
+        {/if}
+      </div>
+    </CardHeader>
+    <CardContent class="space-y-4">
+      {#if data.canEdit}
+        {#if !showBatchForm}
+          <Button variant="outline" size="sm" onclick={() => (showBatchForm = true)}>
+            Log Production Run
+          </Button>
+        {:else}
+          <form
+            method="POST"
+            action="?/createSession"
+            use:enhance={() => {
+              batchSubmitting = true
+              return async ({ result, update }) => {
+                batchSubmitting = false
+                if (result.type === 'success') {
+                  toast.success('Batch session logged')
+                  resetBatchForm()
+                  await update({ reset: false })
+                } else if (result.type === 'failure') {
+                  toast.error(result.data?.error || 'Failed to log session')
+                } else {
+                  await update()
+                }
+              }
+            }}
+          >
+            <input type="hidden" name="data" value={batchFormData} />
+            <div class="space-y-4 rounded-lg border border-border p-4">
+              <!-- Planned values (read-only) -->
+              <div class="flex flex-wrap gap-4">
+                <div>
+                  <span class="mb-1 block text-[10px] font-medium text-muted-foreground">Planned Dough</span>
+                  <span class="text-sm font-medium tabular-nums">{formatGrams(plannedTotalWeight)}</span>
+                </div>
+                <div>
+                  <span class="mb-1 block text-[10px] font-medium text-muted-foreground">Planned Pcs</span>
+                  <span class="text-sm font-medium tabular-nums">{plannedPieces}</span>
+                </div>
+                <div>
+                  <span class="mb-1 block text-[10px] font-medium text-muted-foreground">Target Piece Wt</span>
+                  <span class="text-sm font-medium tabular-nums">{formatGrams(plannedPieceWeight)}</span>
+                </div>
+                <div>
+                  <span class="mb-1 block text-[10px] font-medium text-muted-foreground">Scale</span>
+                  <Badge variant="secondary" class="text-sm tabular-nums">{scaleFactor.toFixed(2)}x</Badge>
+                </div>
+              </div>
+
+              <!-- Date + Measured values -->
+              <div class="flex flex-wrap gap-4">
+                <div class="w-36">
+                  <label for="batch-date" class="mb-1.5 block text-xs font-medium text-muted-foreground">Date</label>
+                  <input
+                    id="batch-date"
+                    type="date"
+                    bind:value={batchDate}
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  />
+                </div>
+                <div class="w-40">
+                  <label for="dough-off" class="mb-1.5 block text-xs font-medium text-muted-foreground">Dough Wt Off Mixer (g)</label>
+                  <input
+                    id="dough-off"
+                    type="number"
+                    min="0"
+                    step="1"
+                    bind:value={doughWeightOff}
+                    placeholder="e.g. 9800"
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  />
+                  {#if previewProcessLoss != null}
+                    <span class="mt-1 block text-[10px] tabular-nums {Math.abs(previewProcessLoss) > 0.05 ? 'text-amber-600' : 'text-muted-foreground'}">
+                      Process loss: {(previewProcessLoss * 100).toFixed(1)}%
+                    </span>
+                  {/if}
+                </div>
+                <div class="w-32">
+                  <label for="pcs-loaded" class="mb-1.5 block text-xs font-medium text-muted-foreground">Pieces Loaded</label>
+                  <input
+                    id="pcs-loaded"
+                    type="number"
+                    min="0"
+                    step="1"
+                    bind:value={piecesLoaded}
+                    placeholder="e.g. 48"
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  />
+                </div>
+                <div class="w-40">
+                  <label for="finished-wt" class="mb-1.5 block text-xs font-medium text-muted-foreground">Finished Piece Wt (g)</label>
+                  <input
+                    id="finished-wt"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    bind:value={finishedPieceWeight}
+                    placeholder="e.g. 185"
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                  />
+                  {#if previewBakeLoss != null}
+                    <span class="mt-1 block text-[10px] tabular-nums {Math.abs(previewBakeLoss) > 0.15 ? 'text-amber-600' : 'text-muted-foreground'}">
+                      Bake loss: {(previewBakeLoss * 100).toFixed(1)}%
+                    </span>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- Notes -->
+              <div>
+                <label for="batch-notes" class="mb-1.5 block text-xs font-medium text-muted-foreground">Notes</label>
+                <textarea
+                  id="batch-notes"
+                  bind:value={batchNotes}
+                  rows="2"
+                  placeholder="Optional notes about this batch..."
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+                ></textarea>
+              </div>
+
+              <!-- Actions -->
+              <div class="flex gap-2">
+                <Button type="submit" size="sm" disabled={batchSubmitting}>
+                  {batchSubmitting ? 'Saving...' : 'Save Session'}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onclick={() => resetBatchForm()}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </form>
+        {/if}
+      {/if}
+
+      <!-- Session History Table -->
+      {#if data.batchSessions && data.batchSessions.length > 0}
+        <div class="overflow-x-auto rounded-lg border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2 font-medium">Date</th>
+                <th class="px-3 py-2 font-medium text-right">Dough Off</th>
+                <th class="px-3 py-2 font-medium text-right">Pcs Loaded</th>
+                <th class="px-3 py-2 font-medium text-right">Finished Wt</th>
+                <th class="px-3 py-2 font-medium text-right">Proc Loss</th>
+                <th class="px-3 py-2 font-medium text-right">Bake Loss</th>
+                <th class="px-3 py-2 font-medium text-right">Scale</th>
+                {#if data.canEdit}
+                  <th class="px-3 py-2 font-medium"></th>
+                {/if}
+              </tr>
+            </thead>
+            <tbody>
+              {#each data.batchSessions as session}
+                <tr class="border-b border-border last:border-b-0">
+                  <td class="px-3 py-1.5">
+                    <div class="font-medium">{session.session_date}</div>
+                    <div class="text-[10px] text-muted-foreground">{session.created_by_name || session.created_by_email}</div>
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.dough_weight_off_mixer != null ? formatGrams(session.dough_weight_off_mixer) : '—'}
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.pieces_loaded != null ? session.pieces_loaded : '—'}
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.finished_piece_weight != null ? formatGrams(session.finished_piece_weight) : '—'}
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.actual_process_loss_pct != null ? formatPct(session.actual_process_loss_pct) : '—'}
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.actual_bake_loss_pct != null ? formatPct(session.actual_bake_loss_pct) : '—'}
+                  </td>
+                  <td class="px-3 py-1.5 text-right tabular-nums">
+                    {session.scale_factor.toFixed(2)}x
+                  </td>
+                  {#if data.canEdit}
+                    <td class="px-3 py-1.5 text-right">
+                      <form
+                        method="POST"
+                        action="?/deleteSession"
+                        use:enhance={() => {
+                          return async ({ result, update }) => {
+                            if (result.type === 'success') {
+                              toast.success('Session deleted')
+                              await update({ reset: false })
+                            } else {
+                              await update()
+                            }
+                          }
+                        }}
+                      >
+                        <input type="hidden" name="id" value={session.id} />
+                        <button
+                          type="submit"
+                          class="text-muted-foreground hover:text-destructive transition-colors"
+                          title="Delete session"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </form>
+                    </td>
+                  {/if}
+                </tr>
+                {#if session.notes}
+                  <tr class="border-b border-border last:border-b-0">
+                    <td colspan={data.canEdit ? 8 : 7} class="px-3 py-1 text-xs text-muted-foreground italic">
+                      {session.notes}
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <p class="py-4 text-center text-sm text-muted-foreground">No batch sessions logged yet.</p>
+      {/if}
+    </CardContent>
+  </Card>
 
   <!-- ── Per-Preferment Cards ──────────────────────────── -->
 
@@ -410,7 +1038,7 @@
               {#each Object.entries(pf.breakdown) as [name, qty]}
                 <div class="flex items-center justify-between rounded-md bg-indigo-50/50 px-3 py-1.5 text-sm">
                   <span class="font-medium">{name}</span>
-                  <span class="tabular-nums text-muted-foreground">{formatGrams(qty)}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(qty * scaleFactor)}</span>
                 </div>
               {/each}
             </div>
@@ -445,7 +1073,7 @@
               {#each auto.autolyse_ingredients as ing}
                 <div class="flex items-center justify-between rounded-md bg-teal-50/50 px-3 py-1.5 text-sm">
                   <span class="font-medium">{ing.name}</span>
-                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty)}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty * scaleFactor)}</span>
                 </div>
               {/each}
               {#if auto.autolyse_ingredients.length === 0}
@@ -460,7 +1088,7 @@
               {#each auto.final_mix_ingredients as ing}
                 <div class="flex items-center justify-between rounded-md bg-muted/30 px-3 py-1.5 text-sm">
                   <span class="font-medium">{ing.name}</span>
-                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty)}</span>
+                  <span class="tabular-nums text-muted-foreground">{formatGrams(ing.qty * scaleFactor)}</span>
                 </div>
               {/each}
               {#if auto.final_mix_ingredients.length === 0}
@@ -662,16 +1290,17 @@
       <CardContent>
         <div class="space-y-6">
           {#each data.companionDetails as comp}
+            {@const scaledCompQty = (comp.qty || 0) * scaleFactor}
             {@const compProcessLoss = comp.calculated?.totals?.process_loss_pct || 0}
             {@const compBakeLoss = comp.calculated?.totals?.bake_loss_pct || 0}
             {@const compLossDenom = (1 - compProcessLoss) * (1 - compBakeLoss)}
-            {@const compRawQty = comp.qty && compLossDenom > 0 ? comp.qty / compLossDenom : comp.qty}
+            {@const compRawQty = scaledCompQty && compLossDenom > 0 ? scaledCompQty / compLossDenom : scaledCompQty}
             {@const compScale = compRawQty && comp.calculated?.totals?.total_weight ? compRawQty / comp.calculated.totals.total_weight : 1}
             <div>
               <div class="mb-3 flex items-center gap-2">
                 <a href="/recipes/{comp.companion_recipe_id}" class="text-sm font-semibold hover:underline">{comp.companion_name}</a>
                 <Badge variant="secondary" class="text-[10px] font-normal">{comp.role}</Badge>
-                <span class="text-xs font-medium tabular-nums text-muted-foreground">{formatGrams(comp.qty || 0)}</span>
+                <span class="text-xs font-medium tabular-nums text-muted-foreground">{formatGrams(scaledCompQty)}</span>
                 {#if compProcessLoss > 0 || compBakeLoss > 0}
                   <span class="text-[10px] tabular-nums text-muted-foreground">
                     (raw: {formatGrams(compRawQty)}{compProcessLoss > 0 ? `, ${(compProcessLoss * 100).toFixed(0)}% proc` : ''}{compBakeLoss > 0 ? `, ${(compBakeLoss * 100).toFixed(0)}% bake` : ''})
