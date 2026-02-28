@@ -10,10 +10,7 @@ import {
 } from '$lib/server/db.js'
 import { createSession, setSessionCookie } from '$lib/server/auth.js'
 import { rpID, origin } from '$lib/server/webauthn-config.js'
-
-/** Rate limit: max attempts per challengeId */
-const attempts = new Map()
-const MAX_ATTEMPTS = 5
+import { isRateLimited, recordAttempt } from '$lib/server/rate-limit.js'
 
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request, cookies }) {
@@ -25,11 +22,10 @@ export async function POST({ request, cookies }) {
   }
 
   // Rate limit by challengeId
-  const count = attempts.get(challengeId) || 0
-  if (count >= MAX_ATTEMPTS) {
+  if (isRateLimited('passkeyVerify', challengeId, 5 * 60 * 1000, 5)) {
     return json({ error: 'Too many attempts' }, { status: 429 })
   }
-  attempts.set(challengeId, count + 1)
+  recordAttempt('passkeyVerify', challengeId)
 
   const challenge = getWebAuthnChallenge(challengeId)
   if (
@@ -42,7 +38,6 @@ export async function POST({ request, cookies }) {
 
   const credential = getWebAuthnCredential(assertionResponse.id)
   if (!credential) {
-    attempts.set(challengeId, (attempts.get(challengeId) || 0) + 1)
     return json({ error: 'Credential not found' }, { status: 400 })
   }
 
@@ -77,7 +72,6 @@ export async function POST({ request, cookies }) {
     Date.now()
   )
   deleteWebAuthnChallenge(challengeId)
-  attempts.delete(challengeId)
 
   // Create session directly (passkey is inherently multi-factor)
   const session = createSession(credential.user_id)

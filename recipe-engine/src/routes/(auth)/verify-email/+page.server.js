@@ -11,28 +11,7 @@ import {
   getBakeryMember,
 } from '$lib/server/db.js'
 import { sendEmail, verificationEmail } from '$lib/server/email.js'
-
-// ─── Rate limiter ────────────────────────────────────────────────────────────
-
-/** @type {Map<string, Map<string, number[]>>} */
-const rateLimiters = new Map()
-
-function isRateLimited(limiterName, key, windowMs, max) {
-  if (!rateLimiters.has(limiterName)) rateLimiters.set(limiterName, new Map())
-  const limiter = rateLimiters.get(limiterName)
-  const now = Date.now()
-  const attempts = (limiter.get(key) || []).filter((t) => now - t < windowMs)
-  limiter.set(key, attempts)
-  return attempts.length >= max
-}
-
-function recordAttempt(limiterName, key) {
-  if (!rateLimiters.has(limiterName)) rateLimiters.set(limiterName, new Map())
-  const limiter = rateLimiters.get(limiterName)
-  const attempts = limiter.get(key) || []
-  attempts.push(Date.now())
-  limiter.set(key, attempts)
-}
+import { isRateLimited, recordAttempt } from '$lib/server/rate-limit.js'
 
 // ─── Load ────────────────────────────────────────────────────────────────────
 

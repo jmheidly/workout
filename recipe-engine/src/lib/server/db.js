@@ -246,6 +246,15 @@ function initSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user ON webauthn_challenges(user_id);
 
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      limiter TEXT NOT NULL,
+      key TEXT NOT NULL,
+      attempted_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rate_limits_lookup
+      ON rate_limits(limiter, key, attempted_at);
+
     CREATE TABLE IF NOT EXISTS batch_sessions (
       id TEXT PRIMARY KEY,
       recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,

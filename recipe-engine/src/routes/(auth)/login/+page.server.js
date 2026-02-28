@@ -13,28 +13,11 @@ import {
 import { verifyPassword } from '$lib/server/auth.js'
 import { beginMfaOrCreateSession } from '$lib/server/mfa-login.js'
 import { sendEmail, loginCodeEmail } from '$lib/server/email.js'
-
-// ─── Generic rate limiter ────────────────────────────────────────────────────
-
-/** @type {Map<string, Map<string, number[]>>} */
-const rateLimiters = new Map()
-
-function isRateLimited(limiterName, key, windowMs, max) {
-  if (!rateLimiters.has(limiterName)) rateLimiters.set(limiterName, new Map())
-  const limiter = rateLimiters.get(limiterName)
-  const now = Date.now()
-  const attempts = (limiter.get(key) || []).filter((t) => now - t < windowMs)
-  limiter.set(key, attempts)
-  return attempts.length >= max
-}
-
-function recordAttempt(limiterName, key) {
-  if (!rateLimiters.has(limiterName)) rateLimiters.set(limiterName, new Map())
-  const limiter = rateLimiters.get(limiterName)
-  const attempts = limiter.get(key) || []
-  attempts.push(Date.now())
-  limiter.set(key, attempts)
-}
+import {
+  isRateLimited,
+  recordAttempt,
+  deleteExpiredRateLimits,
+} from '$lib/server/rate-limit.js'
 
 // ─── Shared redirect helper ─────────────────────────────────────────────────
 
@@ -73,6 +56,7 @@ export function load({ locals, url }) {
 /** @type {import('./$types').Actions} */
 export const actions = {
   password: async ({ request, cookies, url }) => {
+    deleteExpiredRateLimits()
     const form = await request.formData()
     const email = form.get('email')?.toString()?.trim()?.toLowerCase()
     const password = form.get('password')?.toString()
