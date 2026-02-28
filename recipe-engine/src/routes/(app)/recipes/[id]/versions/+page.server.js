@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit'
+import { error, fail, redirect } from '@sveltejs/kit'
 import {
   getRecipe,
   getRecipeVersions,
@@ -6,8 +6,13 @@ import {
   getRecipeVersion,
   buildRecipeSnapshot,
   getMixerProfiles,
+  updateRecipe,
+  syncIngredientLibrary,
+  getBakerySubscription,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
+import { requireRole } from '$lib/server/auth.js'
+import { getSubscriptionStatus, PLAN_TIERS } from '$lib/server/plans.js'
 import { diffVersions, summarizeChanges } from '$lib/version-diff.js'
 
 /**
@@ -210,5 +215,42 @@ export function load({ params, locals, url }) {
     mixerProfiles,
     changeSummaries,
     pagination: { page, pageSize: PAGE_SIZE, totalCount, totalPages },
+    canEdit: locals.bakery.role !== 'viewer',
   }
+}
+
+/** @type {import('./$types').Actions} */
+export const actions = {
+  restore: async ({ request, params, locals }) => {
+    requireRole(locals, 'owner', 'admin', 'member')
+    const form = await request.formData()
+    const versionNumber = parseInt(form.get('version_number')?.toString(), 10)
+    if (!versionNumber || isNaN(versionNumber)) {
+      return fail(400, { error: 'Invalid version number' })
+    }
+
+    const recipe = getRecipe(params.id, locals.bakery.id)
+    if (!recipe) return fail(404, { error: 'Recipe not found' })
+
+    const ver = getRecipeVersion(params.id, versionNumber)
+    if (!ver) return fail(404, { error: 'Version not found' })
+
+    const snapshot = JSON.parse(ver.snapshot)
+
+    // Resolve version limit from current plan
+    let maxVersions = null
+    const sub = getBakerySubscription(locals.bakery.id)
+    if (sub) {
+      const status = getSubscriptionStatus(sub)
+      const isTrialLike = status.plan === 'trial' || !PLAN_TIERS[status.plan]
+      const tier = isTrialLike ? PLAN_TIERS.team : PLAN_TIERS[status.plan]
+      maxVersions = tier.limits.maxVersionsPerRecipe
+    }
+
+    const changeNote = `Restored to v${versionNumber}`
+    updateRecipe(params.id, locals.bakery.id, snapshot, locals.user.id, changeNote, maxVersions)
+    syncIngredientLibrary(locals.user.id, locals.bakery.id, snapshot.ingredients || [])
+
+    redirect(303, `/recipes/${params.id}`)
+  },
 }

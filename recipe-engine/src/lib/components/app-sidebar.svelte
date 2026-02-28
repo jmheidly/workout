@@ -173,8 +173,13 @@
             style="width: {Math.max(4, (subscription.trialDaysLeft / TRIAL_TOTAL_DAYS) * 100)}%"
           ></div>
         </div>
+        {#if subscription.recommendedPlanName}
+          <span class="mb-1 block text-[11px] text-sidebar-foreground/60">
+            Your usage fits: <strong class="text-sidebar-foreground/80">{subscription.recommendedPlanName}</strong>
+          </span>
+        {/if}
         <span class="text-xs font-medium text-sidebar-foreground/80 transition-colors group-hover:text-sidebar-foreground">
-          Upgrade to Pro &rarr;
+          View plans &rarr;
         </span>
       </a>
     </div>

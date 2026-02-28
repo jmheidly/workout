@@ -28,11 +28,28 @@
 
   let scaleMode = $state('pieces') // 'pieces' | 'dough' | 'flour'
   let scaleTarget = $state(null) // null = use recipe default
+  let pieceWeightOverride = $state(null) // null = use recipe default
+
+  // Effective piece weight and num_pieces (accounting for override)
+  let effectivePieceWeight = $derived(
+    pieceWeightOverride ?? data.recipe.yield_per_piece ?? 0
+  )
+  let effectiveNumPieces = $derived.by(() => {
+    const t = data.calculated?.totals
+    if (!t) return 0
+    if (pieceWeightOverride != null && pieceWeightOverride > 0) {
+      // Recalculate: scale raw_yield proportionally, then divide
+      const origYield = data.recipe.yield_per_piece || 1
+      const newRaw = (t.raw_yield_per_piece || origYield) * pieceWeightOverride / origYield
+      return t.total_weight / newRaw
+    }
+    return t.num_pieces
+  })
 
   let defaultTarget = $derived.by(() => {
     const t = data.calculated?.totals
     if (!t) return 0
-    if (scaleMode === 'pieces') return Math.round(t.num_pieces)
+    if (scaleMode === 'pieces') return Math.round(effectiveNumPieces)
     if (scaleMode === 'dough') return Math.round(t.total_weight)
     if (scaleMode === 'flour') return Math.round(t.total_flour)
     return 0
@@ -44,7 +61,7 @@
     const t = data.calculated?.totals
     if (!t || !activeTarget) return 1
     if (scaleMode === 'pieces')
-      return t.num_pieces > 0 ? activeTarget / t.num_pieces : 1
+      return effectiveNumPieces > 0 ? activeTarget / effectiveNumPieces : 1
     if (scaleMode === 'dough')
       return t.total_weight > 0 ? activeTarget / t.total_weight : 1
     if (scaleMode === 'flour')
@@ -61,9 +78,7 @@
     }
   })
 
-  let piecesDisabled = $derived(
-    !data.recipe.yield_per_piece || data.recipe.yield_per_piece === 0
-  )
+  let piecesDisabled = $derived(!effectivePieceWeight || effectivePieceWeight === 0)
   let flourDisabled = $derived(
     !data.calculated?.totals?.total_flour ||
       data.calculated.totals.total_flour === 0
@@ -115,7 +130,24 @@
   let targetMixTime = $state(defaultMixTime())
   let scheduleMode = $state('forward') // 'forward' | 'reverse'
 
-  // ── Timeline ────────────────────────────────────────────────
+  // ── Timeline (with phase skipping) ─────────────────────────
+
+  let skippedPfIds = $state(new Set())
+  let skippedCompanionIds = $state(new Set())
+
+  function toggleSkipPf(pfId) {
+    const next = new Set(skippedPfIds)
+    if (next.has(pfId)) next.delete(pfId)
+    else next.add(pfId)
+    skippedPfIds = next
+  }
+
+  function toggleSkipCompanion(compId) {
+    const next = new Set(skippedCompanionIds)
+    if (next.has(compId)) next.delete(compId)
+    else next.add(compId)
+    skippedCompanionIds = next
+  }
 
   let timeline = $derived.by(() => {
     const anchor = new Date(targetMixTime)
@@ -127,6 +159,8 @@
       mode: scheduleMode,
       mixType: data.recipe.mix_type || 'Improved Mix',
       companions: data.companionDetails || [],
+      skippedPfIds,
+      skippedCompanionIds,
     })
   })
 
@@ -262,10 +296,10 @@
   let plannedTotalWeight = $derived(
     (data.calculated?.totals?.total_weight || 0) * scaleFactor
   )
+  let plannedPieceWeight = $derived(effectivePieceWeight)
   let plannedPieces = $derived(
-    Math.round((data.calculated?.totals?.num_pieces || 0) * scaleFactor)
+    Math.round(effectiveNumPieces * scaleFactor)
   )
-  let plannedPieceWeight = $derived(data.recipe.yield_per_piece || 0)
 
   let previewProcessLoss = $derived.by(() => {
     if (doughWeightOff == null || !plannedTotalWeight) return null
@@ -488,6 +522,25 @@
                 class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
               />
             </div>
+            <div class="w-28">
+              <label for="piece-weight" class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Piece Wt (g)</label>
+              <input
+                id="piece-weight"
+                type="number"
+                min="0"
+                step="1"
+                value={effectivePieceWeight}
+                oninput={(e) => {
+                  const v = Number(e.target.value)
+                  pieceWeightOverride = v !== (data.recipe.yield_per_piece || 0) ? v : null
+                  scaleTarget = null
+                }}
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums outline-none ring-ring transition-shadow focus:ring-2 focus:ring-offset-1"
+              />
+              {#if pieceWeightOverride != null}
+                <span class="mt-1 block text-[10px] text-amber-600">Recipe: {formatGrams(data.recipe.yield_per_piece || 0)}</span>
+              {/if}
+            </div>
             <div>
               <label class="mb-1.5 block h-4 text-xs font-medium text-muted-foreground">Scale</label>
               <Badge
@@ -499,8 +552,8 @@
             </div>
           </div>
           <p class="mt-2 text-xs text-muted-foreground tabular-nums">
-            {#if scaleMode === 'pieces' && data.calculated.totals.num_pieces > 0}
-              Recipe: {Math.round(data.calculated.totals.num_pieces)} pcs &times; {formatGrams(data.recipe.yield_per_piece || 0)}
+            {#if scaleMode === 'pieces' && effectiveNumPieces > 0}
+              Recipe: {Math.round(effectiveNumPieces)} pcs &times; {formatGrams(effectivePieceWeight)}
             {:else if scaleMode === 'dough'}
               Recipe: {formatGrams(data.calculated.totals.total_weight)} dough
             {:else if scaleMode === 'flour'}
@@ -534,7 +587,8 @@
 
   <!-- ── Production Timeline ─────────────────────────────── -->
 
-  {#if timeline && timeline.tracks.length > 0}
+  {#if timeline && (timeline.tracks.length > 0 || skippedPfIds.size > 0 || skippedCompanionIds.size > 0)}
+    {@const hasSkippable = enabledPfs.length > 0 || (data.companionDetails && data.companionDetails.length > 0)}
     <Card>
       <CardHeader class="pb-4">
         <div class="flex items-center justify-between">
@@ -546,9 +600,52 @@
             {formatDuration(Math.round(timeline.totalDurationMin))}
           </Badge>
         </div>
+        {#if hasSkippable}
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <span class="text-xs font-medium text-muted-foreground">Phases:</span>
+            {#each enabledPfs as pf (pf.id)}
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors {skippedPfIds.has(pf.id)
+                  ? 'border-dashed border-muted-foreground/40 text-muted-foreground line-through opacity-60'
+                  : 'border-indigo-300 bg-indigo-50 text-indigo-700'}"
+                onclick={() => toggleSkipPf(pf.id)}
+                title={skippedPfIds.has(pf.id) ? `Re-enable ${pf.name}` : `Skip ${pf.name} (already prepared)`}
+              >
+                {#if skippedPfIds.has(pf.id)}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" x2="23" y1="1" y2="23"/></svg>
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                {/if}
+                {pf.name}
+              </button>
+            {/each}
+            {#each data.companionDetails || [] as comp (comp.companion_recipe_id)}
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors {skippedCompanionIds.has(comp.companion_recipe_id)
+                  ? 'border-dashed border-muted-foreground/40 text-muted-foreground line-through opacity-60'
+                  : 'border-amber-300 bg-amber-50 text-amber-700'}"
+                onclick={() => toggleSkipCompanion(comp.companion_recipe_id)}
+                title={skippedCompanionIds.has(comp.companion_recipe_id) ? `Re-enable ${comp.companion_name}` : `Skip ${comp.companion_name} (already prepared)`}
+              >
+                {#if skippedCompanionIds.has(comp.companion_recipe_id)}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" x2="23" y1="1" y2="23"/></svg>
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                {/if}
+                {comp.companion_name}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </CardHeader>
       <CardContent>
-        <TimelineChart {timeline} />
+        {#if timeline.tracks.length > 0}
+          <TimelineChart {timeline} />
+        {:else}
+          <p class="py-4 text-center text-sm text-muted-foreground">All phases skipped. Click a phase above to re-enable it.</p>
+        {/if}
       </CardContent>
     </Card>
   {/if}

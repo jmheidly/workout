@@ -30,9 +30,9 @@ The recipe engine has a comprehensive feature set: multi-tenancy with RBAC, five
 | Error monitoring (Sentry) | Not started |
 | SQLite backup strategy (Litestream) | Not started |
 | Docker + CI/CD | Not started |
-| Rate limiter persistence | Not started |
+| Rate limiter persistence | Done |
 
-**Progress: 17/21 items complete. 4 remaining (all infrastructure/ops).**
+**Progress: 18/21 items complete. 3 remaining (all infrastructure/ops).**
 
 ---
 
@@ -183,16 +183,13 @@ All P0 items are complete.
 - `.github/workflows/ci.yml`
 - `.dockerignore`
 
-### 10. Rate limiter persistence — NOT STARTED
+### 10. Rate limiter persistence — DONE
 
-**Current state:** In-memory `Map<string, Map<string, number[]>>` — resets on server restart.
-
-**What's needed:** Persist rate limit data to survive restarts. Two options:
-
-- **SQLite table** (simplest, no new deps): `rate_limit_attempts` table, query with window filter
-- **Redis** (standard, but adds infra): use `ioredis` with sliding window counters
-
-**Recommendation:** SQLite table for now. Single-node deployment means no cross-process sharing needed. Add a `rate_limits` table with `(key, limiter, timestamp)` and query with `WHERE timestamp > ?`.
+- `rate_limits` SQLite table with composite index on `(limiter, key, attempted_at)`
+- Shared module: `src/lib/server/rate-limit.js` — `isRateLimited()`, `recordAttempt()`, `deleteExpiredRateLimits()`
+- Replaces duplicated in-memory `Map` implementations in login, verify-email, and passkey verify
+- Expired rows (>1 hour) cleaned up on each password login request
+- All 6 rate limiters now persist across server restarts
 
 ---
 
@@ -315,7 +312,7 @@ Only cookie is `recipe_session` (httpOnly, functional). Privacy policy states no
 ### Phase 1: Infrastructure (before any public users)
 1. Litestream backup + Dockerfile
 2. GitHub Actions CI (lint + test + build)
-3. Rate limiter to SQLite
+3. ~~Rate limiter to SQLite~~ — Done
 
 ### Phase 2: Security hardening
 4. Sentry integration

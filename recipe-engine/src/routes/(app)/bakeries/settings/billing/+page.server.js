@@ -2,8 +2,13 @@ import { requireRole } from '$lib/server/auth.js'
 import {
   getBakerySubscription,
   getBakeryMemberCount,
+  getBakeryUsage,
 } from '$lib/server/db.js'
-import { getSubscriptionStatus, PLANS } from '$lib/server/plans.js'
+import {
+  getSubscriptionStatus,
+  getRecommendedPlan,
+  PLAN_TIERS,
+} from '$lib/server/plans.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals, url }) {
@@ -12,7 +17,18 @@ export function load({ locals, url }) {
   const sub = getBakerySubscription(locals.bakery.id)
   const status = getSubscriptionStatus(sub)
   const memberCount = getBakeryMemberCount(locals.bakery.id)
-  const planConfig = PLANS[status.plan] || PLANS.trial
+  const usage = getBakeryUsage(locals.bakery.id)
+  const recommendation = getRecommendedPlan(usage)
+
+  // Serialize tiers for the comparison grid (replace Infinity with null for JSON)
+  const tiers = Object.entries(PLAN_TIERS).map(([key, tier]) => ({
+    key,
+    name: tier.name,
+    description: tier.description,
+    limits: Object.fromEntries(
+      Object.entries(tier.limits).map(([k, v]) => [k, v === Infinity ? null : v])
+    ),
+  }))
 
   return {
     subscription: {
@@ -25,11 +41,12 @@ export function load({ locals, url }) {
       hasStripeSubscription: !!sub?.stripe_subscription_id,
       hasStripeCustomer: !!sub?.stripe_customer_id,
     },
-    usage: {
+    usage,
+    recommendation,
+    tiers,
+    memberCount: {
       members: memberCount.members,
       pendingInvites: memberCount.pendingInvites,
-      total: memberCount.total,
-      maxMembers: planConfig.maxMembers,
     },
     success: url.searchParams.get('success') === '1',
     canceled: url.searchParams.get('canceled') === '1',

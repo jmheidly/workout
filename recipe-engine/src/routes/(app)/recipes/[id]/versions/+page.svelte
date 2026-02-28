@@ -1,6 +1,7 @@
 <script>
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
+  import { enhance } from '$app/forms'
   import { diffVersions } from '$lib/version-diff.js'
   import { DOUGH_TYPE_LABELS } from '$lib/dough-types.js'
   import { formatPct } from '$lib/utils.js'
@@ -15,6 +16,10 @@
   import { Separator } from '$lib/components/ui/separator/index.js'
 
   let { data } = $props()
+
+  // Restore confirmation state
+  let confirmRestore = $state(null)
+  let restoring = $state(false)
 
   // Build mixer ID → name lookup
   const mixerNames = Object.fromEntries(
@@ -493,17 +498,49 @@
                 {/if}
               </div>
               <div class="flex items-center gap-1">
-                <Button
-                  variant={compareA === version.version_number || compareB === version.version_number ? 'default' : 'outline'}
-                  size="sm"
-                  onclick={() => toggleCompare(version.version_number)}
-                >
-                  {#if compareA === version.version_number || compareB === version.version_number}
-                    Selected
-                  {:else}
-                    Compare
+                {#if confirmRestore === version.version_number}
+                  <span class="text-xs text-muted-foreground mr-1">Restore this version?</span>
+                  <form
+                    method="POST"
+                    action="?/restore"
+                    use:enhance={() => {
+                      restoring = true
+                      return async ({ update }) => {
+                        restoring = false
+                        await update()
+                      }
+                    }}
+                  >
+                    <input type="hidden" name="version_number" value={version.version_number} />
+                    <Button type="submit" variant="default" size="sm" disabled={restoring}>
+                      {restoring ? 'Restoring...' : 'Confirm'}
+                    </Button>
+                  </form>
+                  <Button variant="outline" size="sm" onclick={() => (confirmRestore = null)}>
+                    Cancel
+                  </Button>
+                {:else}
+                  {#if data.canEdit}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onclick={() => (confirmRestore = version.version_number)}
+                    >
+                      Restore
+                    </Button>
                   {/if}
-                </Button>
+                  <Button
+                    variant={compareA === version.version_number || compareB === version.version_number ? 'default' : 'outline'}
+                    size="sm"
+                    onclick={() => toggleCompare(version.version_number)}
+                  >
+                    {#if compareA === version.version_number || compareB === version.version_number}
+                      Selected
+                    {:else}
+                      Compare
+                    {/if}
+                  </Button>
+                {/if}
               </div>
             </div>
           </CardContent>

@@ -229,6 +229,8 @@ function buildBlocksForward(steps, anchorMs, context = {}) {
  * @param {'forward'|'reverse'} opts.mode
  * @param {string} opts.mixType
  * @param {Array} [opts.companions] - companion detail objects
+ * @param {Set} [opts.skippedPfIds] - PF IDs to exclude (already prepared)
+ * @param {Set} [opts.skippedCompanionIds] - companion recipe IDs to exclude
  * @returns {Timeline}
  */
 export function computeTimeline({
@@ -238,6 +240,8 @@ export function computeTimeline({
   mode = 'forward',
   mixType = 'Improved Mix',
   companions = [],
+  skippedPfIds = new Set(),
+  skippedCompanionIds = new Set(),
 }) {
   blockIdCounter = 0
   const anchorMs = anchorTime.getTime()
@@ -266,9 +270,9 @@ export function computeTimeline({
 
   const mainIsSynthetic = savedMainSteps.length === 0
 
-  // ── Enabled preferments ────────────────────────────────────────
+  // ── Enabled preferments (excluding skipped) ──────────────────
   const enabledPfs = (recipe.ingredients || []).filter(
-    (i) => i.category === 'PREFERMENT' && i.preferment_settings?.enabled
+    (i) => i.category === 'PREFERMENT' && i.preferment_settings?.enabled && !skippedPfIds.has(i.id)
   )
 
   // ── Resolve PF DAG ─────────────────────────────────────────────
@@ -407,9 +411,9 @@ export function computeTimeline({
     }
   }
 
-  // ── Build Companion Tracks ─────────────────────────────────────
+  // ── Build Companion Tracks (excluding skipped) ────────────────
   if (companions && companions.length > 0) {
-    for (const comp of companions) {
+    for (const comp of companions.filter((c) => !skippedCompanionIds.has(c.companion_recipe_id))) {
       const neededByStage = COMPANION_NEEDED_BY[comp.role] || 'FINISH'
       // Find the main block for this stage
       const targetBlock = mainBlocks.find((b) => b.stage === neededByStage)

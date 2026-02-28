@@ -10,6 +10,7 @@ Complete specification for the recipe versioning system. Every save creates an i
 4. [Pagination](#4-pagination)
 5. [Version History UI](#5-version-history-ui)
 6. [Side-by-Side Comparison](#6-side-by-side-comparison)
+7. [Version Restore](#7-version-restore)
 
 ---
 
@@ -368,6 +369,45 @@ The current recipe state (from `recipes` table) can be compared against any hist
 | autolyse_overrides | Autolyse enabled AND overrides exist in either |
 
 Object values (autolyse_overrides) use `JSON.stringify()` for change detection, not reference equality.
+
+---
+
+## 7. Version Restore
+
+Restore reverts a recipe to a previous version's state. It is **non-destructive** — it creates a new version rather than deleting history.
+
+### 7.1 How It Works
+
+1. Load the target version's snapshot from `recipe_versions`
+2. Pass the parsed snapshot to `updateRecipe()` — the same save pipeline used by the recipe builder
+3. `updateRecipe()` automatically snapshots the current state before overwriting (preserving history) and increments the version counter
+4. An auto-generated change note is saved: `"Restored to v{N}"`
+5. After restore, the user is redirected to the recipe builder (`/recipes/{id}`)
+
+### 7.2 Server Action
+
+The `restore` form action lives in `versions/+page.server.js`. It accepts a `version_number` from form data, loads the snapshot, and calls `updateRecipe()`. Version limits from the billing tier are respected (same pattern as the recipe save action).
+
+### 7.3 Permissions
+
+- Requires `owner`, `admin`, or `member` role (enforced via `requireRole()`)
+- `viewer` role cannot see the Restore button
+
+### 7.4 UI
+
+- Each historical version card shows a **Restore** button (next to Compare)
+- Clicking Restore shows an inline confirmation: "Restore this version?" with **Confirm** / **Cancel** buttons
+- The Confirm button submits a form to `?/restore` with `use:enhance` for progressive enhancement
+- During submission, the button shows "Restoring..." and is disabled
+
+### 7.5 History After Restore
+
+If a recipe is at v5 and the user restores v2:
+
+1. Current v5 state is snapshotted as v5 in `recipe_versions`
+2. v2's snapshot overwrites the recipe in the `recipes` table
+3. Recipe version becomes v6 with change note "Restored to v2"
+4. All versions v1–v5 remain intact in history
 
 ---
 

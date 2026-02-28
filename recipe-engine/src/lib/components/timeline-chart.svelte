@@ -15,16 +15,6 @@
 
   let zoomIndex = $state(3) // default "All"
 
-  // Auto-select zoom based on timeline duration
-  $effect(() => {
-    if (!timeline) return
-    const hours = timeline.totalDurationMin / 60
-    if (hours <= 12) zoomIndex = 0
-    else if (hours <= 24) zoomIndex = 1
-    else if (hours <= 48) zoomIndex = 2
-    else zoomIndex = 3
-  })
-
   let visibleSpan = $derived.by(() => {
     if (!timeline || !timeline.tracks.length) return { startMs: 0, endMs: 1 }
 

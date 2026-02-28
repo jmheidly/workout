@@ -6,9 +6,10 @@ import {
   getBakerySubscription,
   upsertBakerySubscription,
 } from '$lib/server/db.js'
+import { PLAN_TIERS } from '$lib/server/plans.js'
 
 /** @type {import('./$types').RequestHandler} */
-export async function POST({ locals, url }) {
+export async function POST({ request, locals, url }) {
   requireRole(locals, 'owner')
 
   const stripe = getStripe()
@@ -16,9 +17,21 @@ export async function POST({ locals, url }) {
     error(503, 'Billing is not configured. Please set STRIPE_SECRET_KEY.')
   }
 
-  const priceId = env.STRIPE_PRO_PRICE_ID
+  // Parse tier from request body (default: 'starter')
+  let tier = 'starter'
+  try {
+    const body = await request.json()
+    if (body.tier && PLAN_TIERS[body.tier]) {
+      tier = body.tier
+    }
+  } catch {
+    // No body or invalid JSON — use default
+  }
+
+  const tierConfig = PLAN_TIERS[tier]
+  const priceId = env[tierConfig.stripePriceEnvKey]
   if (!priceId) {
-    error(503, 'Billing is not configured. Please set STRIPE_PRO_PRICE_ID.')
+    error(503, `Billing is not configured. Please set ${tierConfig.stripePriceEnvKey}.`)
   }
 
   const sub = getBakerySubscription(locals.bakery.id)
@@ -48,6 +61,7 @@ export async function POST({ locals, url }) {
       subscription_data: {
         metadata: {
           bakery_id: locals.bakery.id,
+          plan_tier: tier,
         },
       },
       success_url: `${url.origin}/bakeries/settings/billing?success=1`,

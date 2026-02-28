@@ -1,5 +1,6 @@
 <script>
   import { enhance } from '$app/forms'
+  import { tick } from 'svelte'
   import { toast } from 'svelte-sonner'
   import { generateId, formatPct, formatGrams } from '$lib/utils.js'
   import { PROCESS_STAGES, suggestProcessSteps, suggestPfProcessSteps } from '$lib/process-steps.js'
@@ -111,6 +112,7 @@
   )
   let calculated = $state(data.calculated)
   let saving = $state(false)
+  let saveFormEl = $state(null)
   let changeNotes = $state('')
   let calculating = $state(false)
   let pfGrams = $state(initPfGrams())
@@ -1226,6 +1228,7 @@
 
     {#if data.canEdit}
       <form
+        bind:this={saveFormEl}
         method="POST"
         action="?/save"
         use:enhance={() => {
@@ -1808,12 +1811,13 @@
                 method="POST"
                 action="?/pullTemplate"
                 use:enhance={() => {
-                  return async ({ result, update }) => {
+                  return async ({ result }) => {
                     if (result.type === 'success' && result.data?.templateData) {
                       applyPfTemplateData(pfIng.id, result.data.templateData)
-                      toast.success(`Updated from "${result.data.templateData.templateName}"`)
+                      changeNotes = `Pulled update from "${result.data.templateData.templateName}"`
+                      await tick()
+                      saveFormEl?.requestSubmit()
                     }
-                    await update({ reset: false })
                   }
                 }}
               >
@@ -2375,10 +2379,11 @@
                       variant="outline"
                       size="sm"
                       class="h-7 text-xs whitespace-nowrap text-amber-700 border-amber-300 hover:bg-amber-100"
-                      onclick={() => {
+                      onclick={async () => {
                         comp.source_version = compStale.current_version
-                        onFieldChange()
-                        toast.success(`Acknowledged update for "${comp.companion_name}"`)
+                        changeNotes = `Acknowledged update for "${comp.companion_name}"`
+                        await tick()
+                        saveFormEl?.requestSubmit()
                       }}
                     >
                       Acknowledge
