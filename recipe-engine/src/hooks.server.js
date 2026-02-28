@@ -1,4 +1,6 @@
+import { sequence } from '@sveltejs/kit/hooks'
 import { redirect } from '@sveltejs/kit'
+import * as Sentry from '@sentry/sveltekit'
 import { validateSession, SESSION_COOKIE } from '$lib/server/auth.js'
 import {
   getUserById,
@@ -37,7 +39,7 @@ const SUBSCRIPTION_BYPASS_PATHS = [
 ]
 
 /** @type {import('@sveltejs/kit').Handle} */
-export async function handle({ event, resolve }) {
+async function appHandle({ event, resolve }) {
   const token = event.cookies.get(SESSION_COOKIE)
 
   if (token) {
@@ -110,3 +112,9 @@ export async function handle({ event, resolve }) {
 
   return response
 }
+
+export const handle = sequence(Sentry.sentryHandle(), appHandle)
+
+export const handleError = Sentry.handleErrorWithSentry(({ error }) => {
+  console.error('Unhandled error:', error)
+})

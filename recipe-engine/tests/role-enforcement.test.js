@@ -34,6 +34,34 @@ vi.mock('$lib/server/db.js', () => ({
   getRecipeVersionCount: vi.fn(() => 0),
   getParentsForRecipe: vi.fn(() => []),
   getBakerySettings: vi.fn(() => ({})),
+  updateBakerySettings: vi.fn(),
+  getTemplatesByBakery: vi.fn(() => []),
+  getPfTemplates: vi.fn(() => []),
+  getCompanionTemplates: vi.fn(() => []),
+  getStaleTemplateLinks: vi.fn(() => []),
+  getTemplate: vi.fn(() => null),
+  getBakerySubscription: vi.fn(() => ({
+    plan: 'trial',
+    status: 'active',
+    trial_ends_at: new Date(Date.now() + 86400000 * 14).toISOString(),
+  })),
+  getBakeryMemberCount: vi.fn(() => ({ total: 1 })),
+  getBakeryUsage: vi.fn(() => ({
+    recipes: 0,
+    templates: 0,
+    mixers: 0,
+    inventoryItems: 0,
+  })),
+}))
+
+vi.mock('$lib/server/billing.js', () => ({
+  requireSubscription: vi.fn(() => ({
+    active: true,
+    plan: 'trial',
+    reason: '',
+    trialDaysLeft: 14,
+  })),
+  requireEntitlement: vi.fn(() => ({ allowed: true })),
 }))
 
 vi.mock('$lib/server/engine.js', () => ({

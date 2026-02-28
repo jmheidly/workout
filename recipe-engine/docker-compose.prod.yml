@@ -1,0 +1,10 @@
+services:
+  recipe-engine:
+    environment:
+      - LITESTREAM_REPLICA_URL=s3://your-bucket/recipe-engine
+      - LITESTREAM_REPLICA_BUCKET=your-bucket
+      - LITESTREAM_REPLICA_PATH=recipe-engine
+      - LITESTREAM_S3_ENDPOINT=https://your-account.r2.cloudflarestorage.com
+      - LITESTREAM_S3_REGION=auto
+      - LITESTREAM_ACCESS_KEY_ID=your-access-key
+      - LITESTREAM_SECRET_ACCESS_KEY=your-secret-key

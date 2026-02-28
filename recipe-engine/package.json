@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
-    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch"
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^7.0.0",
@@ -26,6 +27,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@sentry/sveltekit": "^10.40.0",
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.3",
     "arctic": "^3.7.0",
