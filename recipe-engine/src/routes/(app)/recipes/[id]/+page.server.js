@@ -11,9 +11,11 @@ import {
   getCompanionTemplates,
   getStaleTemplateLinks,
   getTemplate,
+  getBakerySubscription,
 } from '$lib/server/db.js'
 import { calculateRecipe } from '$lib/server/engine.js'
 import { requireRole } from '$lib/server/auth.js'
+import { getSubscriptionStatus, PLAN_TIERS } from '$lib/server/plans.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ params, locals }) {
@@ -116,7 +118,17 @@ export const actions = {
       return fail(403, { error: 'Not authorized' })
     }
 
-    updateRecipe(params.id, locals.bakery.id, data, locals.user.id, changeNotes)
+    // Resolve version limit from current plan
+    let maxVersions = null
+    const sub = getBakerySubscription(locals.bakery.id)
+    if (sub) {
+      const status = getSubscriptionStatus(sub)
+      const isTrialLike = status.plan === 'trial' || !PLAN_TIERS[status.plan]
+      const tier = isTrialLike ? PLAN_TIERS.team : PLAN_TIERS[status.plan]
+      maxVersions = tier.limits.maxVersionsPerRecipe
+    }
+
+    updateRecipe(params.id, locals.bakery.id, data, locals.user.id, changeNotes, maxVersions)
     syncIngredientLibrary(
       locals.user.id,
       locals.bakery.id,

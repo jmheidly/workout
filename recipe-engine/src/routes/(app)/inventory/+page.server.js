@@ -6,6 +6,7 @@ import {
   deleteIngredientLibraryEntry,
 } from '$lib/server/db.js'
 import { requireRole } from '$lib/server/auth.js'
+import { requireEntitlement } from '$lib/server/billing.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -19,6 +20,7 @@ export function load({ locals }) {
 export const actions = {
   create: async ({ request, locals }) => {
     requireRole(locals, 'owner', 'admin', 'member')
+    requireEntitlement(locals, 'inventory_items')
     const form = await request.formData()
     const name = form.get('name')?.toString()?.trim()
     const category = form.get('category')?.toString()

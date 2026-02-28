@@ -1,9 +1,92 @@
 export const TRIAL_DURATION_DAYS = 14
 export const GRACE_PERIOD_DAYS = 7
 
-export const PLANS = {
-  trial: { maxMembers: 25, exportEnabled: true },
-  pro: { maxMembers: 25, exportEnabled: true },
+export const PLAN_TIERS = {
+  starter: {
+    name: 'Starter',
+    description: 'For home bakers and small operations',
+    stripePriceEnvKey: 'STRIPE_STARTER_PRICE_ID',
+    limits: {
+      recipes: 10,
+      templates: 3,
+      mixers: 2,
+      inventoryItems: 50,
+      members: 2,
+      maxVersionsPerRecipe: 5,
+    },
+  },
+  pro: {
+    name: 'Pro',
+    description: 'For growing bakeries',
+    stripePriceEnvKey: 'STRIPE_PRO_PRICE_ID',
+    limits: {
+      recipes: 50,
+      templates: 20,
+      mixers: 10,
+      inventoryItems: 250,
+      members: 10,
+      maxVersionsPerRecipe: 25,
+    },
+  },
+  team: {
+    name: 'Team',
+    description: 'For large bakeries and multi-location teams',
+    stripePriceEnvKey: 'STRIPE_TEAM_PRICE_ID',
+    limits: {
+      recipes: Infinity,
+      templates: Infinity,
+      mixers: Infinity,
+      inventoryItems: Infinity,
+      members: 25,
+      maxVersionsPerRecipe: Infinity,
+    },
+  },
+}
+
+const TIER_ORDER = ['starter', 'pro', 'team']
+
+const METRIC_LABELS = {
+  recipes: 'Recipes',
+  templates: 'Templates',
+  mixers: 'Mixers',
+  inventoryItems: 'Inventory items',
+  members: 'Team members',
+  maxVersionsPerRecipe: 'Versions per recipe',
+}
+
+/**
+ * Find the lowest tier that fits ALL current usage.
+ * @param {{ recipes: number, templates: number, mixers: number, inventoryItems: number, members: number, maxVersionsPerRecipe: number }} usage
+ * @returns {{ plan: string, name: string, breakdown: Array<{ metric: string, label: string, current: number, fitsIn: string }> }}
+ */
+export function getRecommendedPlan(usage) {
+  const breakdown = []
+
+  for (const [metric, label] of Object.entries(METRIC_LABELS)) {
+    const current = usage[metric] ?? 0
+    let fitsIn = 'starter'
+    for (const tier of TIER_ORDER) {
+      if (current <= PLAN_TIERS[tier].limits[metric]) {
+        fitsIn = tier
+        break
+      }
+    }
+    breakdown.push({ metric, label, current, fitsIn })
+  }
+
+  // The recommended plan is the highest tier required by any single metric
+  let recommended = 'starter'
+  for (const item of breakdown) {
+    if (TIER_ORDER.indexOf(item.fitsIn) > TIER_ORDER.indexOf(recommended)) {
+      recommended = item.fitsIn
+    }
+  }
+
+  return {
+    plan: recommended,
+    name: PLAN_TIERS[recommended].name,
+    breakdown,
+  }
 }
 
 /**
@@ -51,35 +134,63 @@ export function getSubscriptionStatus(sub) {
 
 /**
  * Check if a specific entitlement is allowed under the current plan.
+ * During trial, uses team-level limits (nothing gated).
+ * After trial, uses the subscribed tier's limits.
  * @param {string} plan
- * @param {'member_count' | 'export'} entitlement
- * @param {{ currentMemberCount?: number }} [context]
+ * @param {'member_count' | 'export' | 'recipes' | 'templates' | 'mixers' | 'inventory_items' | 'versions_per_recipe'} entitlement
+ * @param {{ currentCount?: number }} [context]
  * @returns {{ allowed: boolean, limit?: number, current?: number, reason?: string }}
  */
 export function checkEntitlement(plan, entitlement, context = {}) {
-  const config = PLANS[plan] || PLANS.trial
+  // Trial and unknown plans get team-level limits (nothing gated)
+  const isTrialLike = plan === 'trial' || !PLAN_TIERS[plan]
+  const tier = isTrialLike ? PLAN_TIERS.team : PLAN_TIERS[plan]
 
-  switch (entitlement) {
-    case 'member_count': {
-      const current = context.currentMemberCount ?? 0
-      const limit = config.maxMembers
-      if (current >= limit) {
-        return {
-          allowed: false,
-          limit,
-          current,
-          reason: `Member limit reached (${current}/${limit}). Upgrade your plan for more members.`,
-        }
-      }
-      return { allowed: true, limit, current }
-    }
-    case 'export': {
-      if (!config.exportEnabled) {
-        return { allowed: false, reason: 'Data export requires a Pro subscription.' }
-      }
-      return { allowed: true }
-    }
-    default:
-      return { allowed: false, reason: `Unknown entitlement: ${entitlement}` }
+  const entitlementToMetric = {
+    member_count: 'members',
+    recipes: 'recipes',
+    templates: 'templates',
+    mixers: 'mixers',
+    inventory_items: 'inventoryItems',
+    versions_per_recipe: 'maxVersionsPerRecipe',
   }
+
+  const metric = entitlementToMetric[entitlement]
+
+  if (metric) {
+    const current = context.currentCount ?? 0
+    const limit = tier.limits[metric]
+    if (limit !== Infinity && current >= limit) {
+      return {
+        allowed: false,
+        limit,
+        current,
+        reason: `Limit reached (${current}/${limit}). ${isTrialLike ? '' : 'Upgrade your plan for more.'}`,
+      }
+    }
+    return { allowed: true, limit: limit === Infinity ? null : limit, current }
+  }
+
+  if (entitlement === 'export') {
+    return { allowed: true }
+  }
+
+  return { allowed: false, reason: `Unknown entitlement: ${entitlement}` }
+}
+
+/**
+ * Reverse-lookup: given a Stripe price ID, find which tier it belongs to.
+ * @param {string} priceId
+ * @param {Record<string, string>} envVars — environment variables object
+ * @returns {'starter' | 'pro' | 'team' | null}
+ */
+export function planTierFromPriceId(priceId, envVars) {
+  if (!priceId) return null
+  for (const [tier, config] of Object.entries(PLAN_TIERS)) {
+    const envPriceId = envVars[config.stripePriceEnvKey]
+    if (envPriceId && envPriceId === priceId) {
+      return tier
+    }
+  }
+  return null
 }

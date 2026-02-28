@@ -6,6 +6,7 @@ import {
   deleteMixerProfile,
 } from '$lib/server/db.js'
 import { requireRole } from '$lib/server/auth.js'
+import { requireEntitlement } from '$lib/server/billing.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -19,6 +20,7 @@ export function load({ locals }) {
 export const actions = {
   create: async ({ request, locals }) => {
     requireRole(locals, 'owner', 'admin', 'member')
+    requireEntitlement(locals, 'mixers')
     const form = await request.formData()
     const dataStr = form.get('data')?.toString()
     if (!dataStr) return fail(400, { error: 'Missing data' })

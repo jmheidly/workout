@@ -245,6 +245,28 @@ function initSchema(db) {
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user ON webauthn_challenges(user_id);
+
+    CREATE TABLE IF NOT EXISTS batch_sessions (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      bakery_id TEXT NOT NULL REFERENCES bakeries(id) ON DELETE CASCADE,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      session_date TEXT NOT NULL DEFAULT (date('now')),
+      planned_total_weight REAL NOT NULL,
+      planned_pieces INTEGER NOT NULL,
+      planned_piece_weight REAL NOT NULL,
+      scale_factor REAL NOT NULL DEFAULT 1,
+      dough_weight_off_mixer REAL,
+      pieces_loaded INTEGER,
+      finished_piece_weight REAL,
+      actual_process_loss_pct REAL,
+      actual_bake_loss_pct REAL,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_batch_sessions_recipe ON batch_sessions(recipe_id);
+    CREATE INDEX IF NOT EXISTS idx_batch_sessions_bakery ON batch_sessions(bakery_id);
+    CREATE INDEX IF NOT EXISTS idx_batch_sessions_date ON batch_sessions(session_date DESC);
   `)
 
   // Migrations — add new columns to recipes (SQLite has no IF NOT EXISTS for columns)
@@ -871,13 +893,13 @@ export function getParentsForRecipe(companionRecipeId) {
  * @param {string} bakeryId
  * @param {RecipeInput} data
  */
-export function updateRecipe(id, bakeryId, data, userId, changeNotes) {
+export function updateRecipe(id, bakeryId, data, userId, changeNotes, maxVersions) {
   const db = getDb()
 
   const txn = db.transaction(() => {
     // §12.4: Snapshot the CURRENT state before overwriting
     if (userId) {
-      snapshotBeforeUpdate(id, userId, changeNotes)
+      snapshotBeforeUpdate(id, userId, changeNotes, maxVersions)
     }
 
     db.prepare(
@@ -1102,8 +1124,14 @@ export function buildRecipeSnapshot(recipe) {
  * @param {string} recipeId
  * @param {string} userId - who is saving
  * @param {string|null} [changeNotes]
+ * @param {number|null} [maxVersions] - if set, skip snapshot when version count >= this limit
  */
-export function snapshotBeforeUpdate(recipeId, userId, changeNotes) {
+export function snapshotBeforeUpdate(recipeId, userId, changeNotes, maxVersions) {
+  if (maxVersions != null && maxVersions !== Infinity) {
+    const count = getRecipeVersionCount(recipeId)
+    if (count >= maxVersions) return
+  }
+
   const db = getDb()
   const recipe = getRecipe(recipeId)
   if (!recipe) return
@@ -1489,6 +1517,7 @@ export function deleteBakery(id) {
   const db = getDb()
   const txn = db.transaction(() => {
     // Domain tables lack ON DELETE CASCADE on bakery_id, so delete explicitly
+    db.prepare('DELETE FROM batch_sessions WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM recipe_templates WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM recipes WHERE bakery_id = ?').run(id)
     db.prepare('DELETE FROM mixer_profiles WHERE bakery_id = ?').run(id)
@@ -2172,6 +2201,31 @@ export function getBakeryMemberCount(bakeryId) {
 }
 
 /**
+ * Get usage metrics for a bakery across all modules.
+ * @param {string} bakeryId
+ * @returns {{ recipes: number, templates: number, mixers: number, inventoryItems: number, members: number, maxVersionsPerRecipe: number }}
+ */
+export function getBakeryUsage(bakeryId) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM recipes WHERE bakery_id = ?) AS recipes,
+        (SELECT COUNT(*) FROM recipe_templates WHERE bakery_id = ?) AS templates,
+        (SELECT COUNT(*) FROM mixer_profiles WHERE bakery_id = ?) AS mixers,
+        (SELECT COUNT(*) FROM ingredient_library WHERE bakery_id = ?) AS inventoryItems,
+        (SELECT COUNT(*) FROM bakery_members WHERE bakery_id = ?) AS members,
+        (SELECT COALESCE(MAX(vc), 0) FROM (
+          SELECT COUNT(*) AS vc FROM recipe_versions rv
+          JOIN recipes r ON r.id = rv.recipe_id
+          WHERE r.bakery_id = ?
+          GROUP BY rv.recipe_id
+        )) AS maxVersionsPerRecipe`
+    )
+    .get(bakeryId, bakeryId, bakeryId, bakeryId, bakeryId, bakeryId)
+}
+
+/**
  * Delete a user and cascade-clean all related data.
  * Bakeries where the user is the sole owner are also deleted.
  * @param {string} userId
@@ -2361,4 +2415,159 @@ export function countUserPasskeys(userId) {
       "SELECT COUNT(*) as count FROM webauthn_credentials WHERE user_id = ? AND kind = 'passkey'"
     )
     .get(userId).count
+}
+
+// ── Batch Sessions ─────────────────────────────────────────────
+
+export function createBatchSession(userId, bakeryId, data) {
+  const db = getDb()
+  const id = generateId()
+
+  let actualProcessLossPct = null
+  if (
+    data.dough_weight_off_mixer != null &&
+    data.planned_total_weight > 0
+  ) {
+    actualProcessLossPct =
+      1 - data.dough_weight_off_mixer / data.planned_total_weight
+  }
+
+  let actualBakeLossPct = null
+  if (
+    data.dough_weight_off_mixer != null &&
+    data.pieces_loaded != null &&
+    data.pieces_loaded > 0 &&
+    data.finished_piece_weight != null
+  ) {
+    const pieceWeightPreBake = data.dough_weight_off_mixer / data.pieces_loaded
+    if (pieceWeightPreBake > 0) {
+      actualBakeLossPct = 1 - data.finished_piece_weight / pieceWeightPreBake
+    }
+  }
+
+  db.prepare(
+    `INSERT INTO batch_sessions (
+      id, recipe_id, bakery_id, created_by, session_date,
+      planned_total_weight, planned_pieces, planned_piece_weight, scale_factor,
+      dough_weight_off_mixer, pieces_loaded, finished_piece_weight,
+      actual_process_loss_pct, actual_bake_loss_pct, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    data.recipe_id,
+    bakeryId,
+    userId,
+    data.session_date || new Date().toISOString().slice(0, 10),
+    data.planned_total_weight,
+    data.planned_pieces,
+    data.planned_piece_weight,
+    data.scale_factor ?? 1,
+    data.dough_weight_off_mixer ?? null,
+    data.pieces_loaded ?? null,
+    data.finished_piece_weight ?? null,
+    actualProcessLossPct,
+    actualBakeLossPct,
+    data.notes || null
+  )
+
+  return id
+}
+
+export function getBatchSessionsForRecipe(recipeId, bakeryId, limit = 50) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT bs.*, u.name AS created_by_name, u.email AS created_by_email
+       FROM batch_sessions bs
+       JOIN users u ON u.id = bs.created_by
+       WHERE bs.recipe_id = ? AND bs.bakery_id = ?
+       ORDER BY bs.session_date DESC, bs.created_at DESC
+       LIMIT ?`
+    )
+    .all(recipeId, bakeryId, limit)
+}
+
+export function getRollingAverages(recipeId, bakeryId, window = 10) {
+  const db = getDb()
+
+  const process = db
+    .prepare(
+      `SELECT AVG(actual_process_loss_pct) AS avg_process_loss_pct,
+              COUNT(*) AS process_session_count
+       FROM (
+         SELECT actual_process_loss_pct
+         FROM batch_sessions
+         WHERE recipe_id = ? AND bakery_id = ? AND actual_process_loss_pct IS NOT NULL
+         ORDER BY session_date DESC, created_at DESC
+         LIMIT ?
+       )`
+    )
+    .get(recipeId, bakeryId, window)
+
+  const bake = db
+    .prepare(
+      `SELECT AVG(actual_bake_loss_pct) AS avg_bake_loss_pct,
+              COUNT(*) AS bake_session_count
+       FROM (
+         SELECT actual_bake_loss_pct
+         FROM batch_sessions
+         WHERE recipe_id = ? AND bakery_id = ? AND actual_bake_loss_pct IS NOT NULL
+         ORDER BY session_date DESC, created_at DESC
+         LIMIT ?
+       )`
+    )
+    .get(recipeId, bakeryId, window)
+
+  return {
+    avg_process_loss_pct: process.avg_process_loss_pct,
+    avg_bake_loss_pct: bake.avg_bake_loss_pct,
+    process_session_count: process.process_session_count,
+    bake_session_count: bake.bake_session_count,
+  }
+}
+
+export function deleteBatchSession(id, bakeryId) {
+  const db = getDb()
+  db.prepare('DELETE FROM batch_sessions WHERE id = ? AND bakery_id = ?').run(
+    id,
+    bakeryId
+  )
+}
+
+export function getRecentBatchSessions(bakeryId, limit = 30) {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT bs.*,
+              r.name AS recipe_name,
+              r.process_loss_pct AS recipe_process_loss_pct,
+              r.bake_loss_pct AS recipe_bake_loss_pct,
+              u.name AS created_by_name
+       FROM batch_sessions bs
+       JOIN recipes r ON r.id = bs.recipe_id
+       JOIN users u ON u.id = bs.created_by
+       WHERE bs.bakery_id = ?
+       ORDER BY bs.session_date DESC, bs.created_at DESC
+       LIMIT ?`
+    )
+    .all(bakeryId, limit)
+}
+
+export function getAllRecipeRollingAverages(bakeryId, window = 10) {
+  const db = getDb()
+  const recipes = db
+    .prepare(
+      `SELECT DISTINCT bs.recipe_id, r.name AS recipe_name,
+              r.process_loss_pct AS recipe_process_loss_pct,
+              r.bake_loss_pct AS recipe_bake_loss_pct
+       FROM batch_sessions bs
+       JOIN recipes r ON r.id = bs.recipe_id
+       WHERE bs.bakery_id = ?`
+    )
+    .all(bakeryId)
+
+  return recipes.map((r) => {
+    const avgs = getRollingAverages(r.recipe_id, bakeryId, window)
+    return { ...r, ...avgs }
+  })
 }

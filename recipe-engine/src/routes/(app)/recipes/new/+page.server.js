@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit'
 import { createRecipe, getMixerProfiles } from '$lib/server/db.js'
 import { requireRole } from '$lib/server/auth.js'
+import { requireEntitlement } from '$lib/server/billing.js'
 
 /** @type {import('./$types').PageServerLoad} */
 export function load({ locals }) {
@@ -12,6 +13,7 @@ export function load({ locals }) {
 export const actions = {
   default: async ({ request, locals }) => {
     requireRole(locals, 'owner', 'admin', 'member')
+    requireEntitlement(locals, 'recipes')
     const form = await request.formData()
     const name = form.get('name')?.toString()?.trim()
     const yieldPerPiece = parseFloat(

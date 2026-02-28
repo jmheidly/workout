@@ -76,7 +76,7 @@ export const actions = {
     if (status.active) {
       const { total } = getBakeryMemberCount(invitation.bakery_id)
       const result = checkEntitlement(status.plan, 'member_count', {
-        currentMemberCount: total,
+        currentCount: total,
       })
       if (!result.allowed) {
         return fail(403, { error: result.reason })

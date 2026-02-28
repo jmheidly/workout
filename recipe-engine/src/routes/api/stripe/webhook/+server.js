@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit'
 import { env } from '$env/dynamic/private'
 import { getStripe } from '$lib/server/stripe.js'
 import { upsertBakerySubscription } from '$lib/server/db.js'
+import { planTierFromPriceId } from '$lib/server/plans.js'
 
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request }) {
@@ -39,8 +40,10 @@ export async function POST({ request }) {
       // Fetch the full subscription from Stripe
       const stripeSub = await stripe.subscriptions.retrieve(session.subscription)
 
+      const planTier = stripeSub.metadata?.plan_tier || 'pro'
+
       upsertBakerySubscription(bakeryId, {
-        plan: 'pro',
+        plan: planTier,
         status: stripeSub.status,
         stripe_customer_id: session.customer,
         stripe_subscription_id: stripeSub.id,
@@ -56,12 +59,22 @@ export async function POST({ request }) {
       const bakeryId = stripeSub.metadata?.bakery_id
       if (!bakeryId) break
 
-      upsertBakerySubscription(bakeryId, {
+      const newPriceId = stripeSub.items.data[0]?.price?.id ?? null
+      const patch = {
         status: stripeSub.status,
-        stripe_price_id: stripeSub.items.data[0]?.price?.id ?? null,
+        stripe_price_id: newPriceId,
         current_period_end: stripeSub.current_period_end,
         cancel_at_period_end: stripeSub.cancel_at_period_end ? 1 : 0,
-      })
+      }
+
+      const derivedTier = planTierFromPriceId(newPriceId, env)
+      if (derivedTier) {
+        patch.plan = derivedTier
+      } else if (newPriceId) {
+        console.warn(`[webhook] Unknown price ID ${newPriceId} — plan not updated`)
+      }
+
+      upsertBakerySubscription(bakeryId, patch)
       break
     }
 
@@ -99,10 +112,18 @@ export async function POST({ request }) {
       const bakeryId = stripeSub.metadata?.bakery_id
       if (!bakeryId) break
 
-      upsertBakerySubscription(bakeryId, {
+      const paidPriceId = stripeSub.items.data[0]?.price?.id ?? null
+      const paidPatch = {
         status: stripeSub.status,
         current_period_end: stripeSub.current_period_end,
-      })
+      }
+
+      const paidTier = planTierFromPriceId(paidPriceId, env)
+      if (paidTier) {
+        paidPatch.plan = paidTier
+      }
+
+      upsertBakerySubscription(bakeryId, paidPatch)
       break
     }
   }

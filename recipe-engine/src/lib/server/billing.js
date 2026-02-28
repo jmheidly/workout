@@ -1,5 +1,10 @@
 import { redirect, error } from '@sveltejs/kit'
-import { getBakerySubscription, getBakeryMemberCount } from '$lib/server/db.js'
+import {
+  getBakerySubscription,
+  getBakeryMemberCount,
+  getBakeryUsage,
+  getRecipeVersionCount,
+} from '$lib/server/db.js'
 import { getSubscriptionStatus, checkEntitlement } from '$lib/server/plans.js'
 
 /**
@@ -22,23 +27,42 @@ export function requireSubscription(locals) {
 /**
  * Require a specific entitlement under the current plan.
  * @param {object} locals
- * @param {'member_count' | 'export'} entitlement
+ * @param {'recipes' | 'templates' | 'mixers' | 'inventory_items' | 'member_count' | 'versions_per_recipe' | 'export'} entitlement
+ * @param {{ recipeId?: string }} [opts]
  */
-export function requireEntitlement(locals, entitlement) {
+export function requireEntitlement(locals, entitlement, opts = {}) {
   const status = requireSubscription(locals)
+
+  let currentCount
 
   if (entitlement === 'member_count') {
     const { total } = getBakeryMemberCount(locals.bakery.id)
-    const result = checkEntitlement(status.plan, 'member_count', {
-      currentMemberCount: total,
-    })
+    currentCount = total
+  } else if (entitlement === 'versions_per_recipe') {
+    if (!opts.recipeId) {
+      error(500, 'recipeId required for versions_per_recipe entitlement')
+    }
+    currentCount = getRecipeVersionCount(opts.recipeId)
+  } else if (
+    ['recipes', 'templates', 'mixers', 'inventory_items'].includes(entitlement)
+  ) {
+    const usage = getBakeryUsage(locals.bakery.id)
+    const entitlementToUsageKey = {
+      recipes: 'recipes',
+      templates: 'templates',
+      mixers: 'mixers',
+      inventory_items: 'inventoryItems',
+    }
+    currentCount = usage[entitlementToUsageKey[entitlement]]
+  } else if (entitlement === 'export') {
+    const result = checkEntitlement(status.plan, entitlement)
     if (!result.allowed) {
       error(403, result.reason)
     }
     return result
   }
 
-  const result = checkEntitlement(status.plan, entitlement)
+  const result = checkEntitlement(status.plan, entitlement, { currentCount })
   if (!result.allowed) {
     error(403, result.reason)
   }
