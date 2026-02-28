@@ -46,9 +46,8 @@
 
   function blockStyle(block) {
     const left = pct(block.startTime.getTime())
-    const right = pct(block.endTime.getTime())
-    const width = right - left
-    return `left: ${left}%; width: ${Math.max(width, 0.3)}%;`
+    const right = 100 - pct(block.endTime.getTime())
+    return `left: ${left}%; right: ${right}%;`
   }
 
   // ── Time axis ticks ────────────────────────────────────
@@ -252,7 +251,7 @@
           {/if}
 
           <!-- Blocks -->
-          {#each track.blocks as block (block.id)}
+          {#each track.blocks as block, blockIdx (block.id)}
             {@const isPast = block.endTime.getTime() < nowMs}
             <button
               type="button"
@@ -262,7 +261,7 @@
                 {isPast ? 'opacity-60' : ''}
                 {track.type === 'companion' ? 'border border-dashed border-amber-400/50' : ''}
                 hover:opacity-90 hover:ring-2 hover:ring-primary/30"
-              style={blockStyle(block)}
+              style="{blockStyle(block)} z-index: {blockIdx + 1};"
               onmouseenter={(e) => showTooltip(block, e)}
               onmouseleave={hideTooltip}
               onfocus={(e) => showTooltip(block, e)}
