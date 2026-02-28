@@ -13,6 +13,7 @@
 9. [Data Scoping & Isolation](#9-data-scoping--isolation)
 10. [Route Architecture](#10-route-architecture)
 11. [Seed Data](#11-seed-data)
+12. [Billing & Subscriptions](#12-billing--subscriptions)
 
 ---
 
@@ -218,17 +219,19 @@ Role checks use `requireRole(locals, ...allowedRoles)` from `auth.js`. This thro
 - `redirect(303, '/bakeries')` if no bakery context
 - `error(403, 'Insufficient permissions')` if role is insufficient
 
-### 5.5 Domain Route Role Enforcement
+### 5.5 Domain Route Role & Entitlement Enforcement
 
-All domain route mutation actions enforce `requireRole(locals, 'owner', 'admin', 'member')`:
+All domain route mutation actions enforce `requireRole(locals, 'owner', 'admin', 'member')`. **Create** actions additionally enforce `requireEntitlement(locals, type)` from `billing.js`, which checks the bakery's subscription tier limits before allowing entity creation:
 
-| Route                          | Gated Actions                                                |
-| ------------------------------ | ------------------------------------------------------------ |
-| `recipes/+page.server.js`      | `delete`                                                     |
-| `recipes/new/+page.server.js`  | `default` action + `load` (viewers can't access create form) |
-| `recipes/[id]/+page.server.js` | `save`, `createMixer`                                        |
-| `mixers/+page.server.js`       | `create`, `update`, `delete`                                 |
-| `inventory/+page.server.js`    | `create`, `update`, `delete`                                 |
+| Route                              | Gated Actions                                                | Entitlement Check            |
+| ---------------------------------- | ------------------------------------------------------------ | ---------------------------- |
+| `recipes/+page.server.js`          | `delete`                                                     | —                            |
+| `recipes/new/+page.server.js`      | `default` action + `load` (viewers can't access create form) | `requireEntitlement(locals, 'recipes')` |
+| `recipes/[id]/+page.server.js`     | `save`, `createMixer`                                        | Version limit (soft, see §12.4) |
+| `templates/new/+page.server.js`    | `create`, `promote`                                          | `requireEntitlement(locals, 'templates')` |
+| `mixers/+page.server.js`           | `create`, `update`, `delete`                                 | `requireEntitlement(locals, 'mixers')` on `create` |
+| `inventory/+page.server.js`        | `create`, `update`, `delete`                                 | `requireEntitlement(locals, 'inventory_items')` on `create` |
+| `invite/[token]/+page.server.js`   | `accept`                                                     | `checkEntitlement(plan, 'member_count')` on target bakery |
 
 **Read-only routes (no gating needed):**
 
@@ -472,14 +475,103 @@ Run: `node scripts/seed.mjs`
 
 ---
 
+## 12. Billing & Subscriptions
+
+Subscriptions are bakery-scoped — each bakery has one subscription row in `bakery_subscriptions`.
+
+### 12.1 Plan Tiers
+
+Three tiers based on bakery complexity. The recommended plan is the **lowest tier that contains ALL current usage**. If any single metric exceeds a tier's limit, the user needs the next tier.
+
+| Metric | Starter | Pro | Team |
+|--------|---------|-----|------|
+| Recipes | 10 | 50 | Unlimited |
+| Templates | 3 | 20 | Unlimited |
+| Mixers | 2 | 10 | Unlimited |
+| Inventory items | 50 | 250 | Unlimited |
+| Team members | 2 | 10 | 25 |
+| Versions per recipe | 5 | 25 | Unlimited |
+
+Tier definitions live in `PLAN_TIERS` in `src/lib/server/plans.js`. The `bakery_subscriptions.plan` column stores `'trial'`, `'starter'`, `'pro'`, or `'team'`.
+
+### 12.2 Trial Behavior
+
+- Every new bakery starts with a 14-day trial (`status: 'trialing'`, `plan: 'trial'`)
+- During trial, **all features are accessible** — `checkEntitlement()` uses team-level limits
+- The sidebar trial card shows the recommended plan based on current usage
+- After trial expiration, the user must subscribe to continue
+
+### 12.3 Usage Tracking & Recommendation
+
+`getBakeryUsage(bakeryId)` in `db.js` returns current counts for all gated metrics in a single query (scalar subselects against indexed `bakery_id` columns). `getRecommendedPlan(usage)` iterates each metric, finds the lowest tier that fits, and returns the highest tier required by any single metric along with a per-metric breakdown.
+
+The layout server computes the recommendation during trial only (to keep page loads minimal for paying users) and passes it to the sidebar.
+
+### 12.4 Post-Trial Enforcement
+
+Enforcement is **soft** — existing data is never locked or hidden:
+
+- `requireEntitlement(locals, entitlement)` in `billing.js` calls `requireSubscription()` (redirects to billing if inactive), resolves the current count for the entitlement type, and delegates to `checkEntitlement()`.
+- If over limit, new entity creation returns 403 but existing data remains accessible and editable.
+- Updates and deletes always work regardless of limits.
+- Users can subscribe to any tier (not just the recommended one), but can't create beyond their tier's limits.
+
+**`requireEntitlement` handles all types:** `recipes`, `templates`, `mixers`, `inventory_items` (via `getBakeryUsage()`), `member_count` (via `getBakeryMemberCount()`, includes pending invites), `versions_per_recipe` (via `getRecipeVersionCount()`), and `export` (no count needed).
+
+**Version limits are special** — they don't block saves. The recipe always saves successfully; only the version snapshot is silently skipped when over the plan limit. `snapshotBeforeUpdate(recipeId, userId, changeNotes, maxVersions)` checks the version count and returns early if `>= maxVersions`. The save action resolves `maxVersions` from the current plan's `limits.maxVersionsPerRecipe` and passes it through `updateRecipe()`.
+
+### 12.5 Stripe Integration
+
+| Component | File | Role |
+|-----------|------|------|
+| Checkout | `src/routes/api/stripe/checkout/+server.js` | Accepts `{ tier }` in POST body, resolves price via `PLAN_TIERS[tier].stripePriceEnvKey`, creates Stripe checkout session with `plan_tier` in subscription metadata |
+| Webhook | `src/routes/api/stripe/webhook/+server.js` | Syncs subscription status and plan tier to `bakery_subscriptions` |
+| Portal | `src/routes/api/stripe/portal/+server.js` | Stripe customer portal for managing existing subscriptions |
+| Billing page | `src/routes/(app)/bakeries/settings/billing/` | Usage breakdown, tier comparison grid, per-tier subscribe buttons |
+
+**Webhook plan sync:** The webhook derives the plan tier from the Stripe price ID using `planTierFromPriceId(priceId, env)` in `plans.js`, which reverse-maps each `PLAN_TIERS[tier].stripePriceEnvKey` env var against the incoming price. This handles plan changes made through the Stripe customer portal (upgrades/downgrades), not just initial checkout:
+
+- `checkout.session.completed` — reads `plan_tier` from subscription metadata (set during checkout)
+- `customer.subscription.updated` — derives tier from price ID, updates `plan` column if a match is found
+- `invoice.paid` — same derivation (belt-and-suspenders for edge cases)
+- Unknown price IDs log a warning but don't update the plan column (safe fallback)
+
+Environment variables: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_STARTER_PRICE_ID`, `STRIPE_PRO_PRICE_ID`, `STRIPE_TEAM_PRICE_ID`.
+
+### 12.6 Data Model
+
+```sql
+CREATE TABLE bakery_subscriptions (
+  id TEXT PRIMARY KEY,
+  bakery_id TEXT NOT NULL UNIQUE REFERENCES bakeries(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT UNIQUE,
+  stripe_subscription_id TEXT UNIQUE,
+  stripe_price_id TEXT,
+  plan TEXT NOT NULL DEFAULT 'trial',        -- trial | starter | pro | team
+  status TEXT NOT NULL DEFAULT 'trialing',   -- trialing | active | past_due | canceled | ...
+  trial_ends_at INTEGER,
+  current_period_end INTEGER,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Backfill: on first boot, `initSchema()` creates trial subscriptions for any bakeries that don't have one (14-day trial from current time).
+
+---
+
 ## Key Files
 
 | File                                  | Description                                                   |
 | ------------------------------------- | ------------------------------------------------------------- |
 | `src/lib/server/db.js`                | Schema, migrations, data migration, all CRUD functions        |
 | `src/lib/server/auth.js`              | Session management, `requireRole()` helper                    |
+| `src/lib/server/billing.js`           | `requireSubscription()`, `requireEntitlement()` — route-level guards |
+| `src/lib/server/plans.js`             | Plan tiers, recommendation logic, entitlement checks, `planTierFromPriceId()` |
 | `src/hooks.server.js`                 | Session validation + bakery context resolution                |
 | `src/routes/(setup)/`                 | Bakery selection and creation (auth-only, no bakery required) |
-| `src/routes/(app)/bakeries/settings/` | Bakery settings and member management                         |
+| `src/routes/(app)/bakeries/settings/` | Bakery settings, member management, and billing               |
 | `src/routes/invite/[token]/`          | Invitation acceptance flow                                    |
+| `src/routes/api/stripe/`             | Stripe checkout, webhook, and portal endpoints                |
 | `scripts/seed.mjs`                    | Demo data seeding with bakery support                         |
